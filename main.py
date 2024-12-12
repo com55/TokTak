@@ -14,7 +14,7 @@ channel_ids = []  # ตัวแปรสำหรับเก็บ ID ช่�
 intents = discord.Intents.default()
 intents.message_content = True
 
-bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents)
+bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents, shard_count=2)
 
 async def setup_table():
     # สร้างตารางในฐานข้อมูลถ้ายังไม่มี
