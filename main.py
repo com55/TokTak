@@ -71,12 +71,12 @@ async def unset_channel(interaction: discord.Interaction):
 
 @bot.event
 async def on_message(message):
-    print(f"Content: {message.content!r}")
 
     if message.author.bot:
         return
 
     if message.channel.id in bot.channel_ids:  # ตรวจสอบว่า ID ช่องอยู่ใน channel_ids
+        print(f"Content: {message.content!r}")
         # ใช้ regex เพื่อหาลิงค์ที่เป็น http:// หรือ https://
         urls = re.findall(r'https?://\S+', message.content)
 
