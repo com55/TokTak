@@ -78,7 +78,7 @@ async def on_message(message):
             updated_urls = [url.replace("tiktok", "tnktok") for url in urls]
             await message.edit(suppress=True)
             for url in updated_urls:
-                await message.reply(f"[-]({url}+?addDesc=true)", mention_author=False)
+                await message.reply(f"[-]({url}?addDesc=true)", mention_author=False)
 
     await bot.process_commands(message)
 
