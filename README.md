@@ -28,3 +28,6 @@ TOKEN=your_discord_bot_token
 ### คำสั่งที่มี
 - `/set` - ตั้งค่าให้บอททำงานในช่องข้อความนั้น
 - `/unset` - ยกเลิกให้บอททำงานในช่องข้อความนั้น
+
+## Credits
+- [fxTikTok (tnktok.com)](https://github.com/okdargy/fxtiktok)
