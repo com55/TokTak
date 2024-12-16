@@ -137,20 +137,20 @@ async def message_number_autocomplete(
     choices = []
     for idx, msg in enumerate(messages):
         # ตัดข้อความให้สั้นลงถ้ายาวเกินไป
-        content = (msg.content[:50] + '...') if len(msg.content) > 50 else msg.content
+        content = msg.content
         
         # คำนวณเวลาที่ผ่านมา
         now = datetime.datetime.now(msg.created_at.tzinfo)
         delta = now - msg.created_at
         
         if delta.days > 0:
-            time_text = f"{delta.days}วันที่แล้ว"
+            time_text = f"{delta.days} วันที่แล้ว"
         elif delta.seconds >= 3600:
-            time_text = f"{delta.seconds // 3600}ชั่วโมงที่แล้ว"
+            time_text = f"{delta.seconds // 3600} ชั่วโมงที่แล้ว"
         elif delta.seconds >= 60:
-            time_text = f"{delta.seconds // 60}นาทีที่แล้ว"
+            time_text = f"{delta.seconds // 60} นาทีที่แล้ว"
         else:
-            time_text = f"{delta.seconds}วินาทีที่แล้ว"
+            time_text = f"{delta.seconds} วินาทีที่แล้ว"
             
         choice_name = f"{msg.author.display_name} [{time_text}]: {content}"
         # จำกัดความยาวของ name ตาม Discord API
