@@ -5,7 +5,9 @@ from dotenv import load_dotenv
 import asyncio
 import discord
 from discord.ext import commands
-
+from discord import app_commands
+from discord.ui import Select, View
+import datetime
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 
@@ -36,11 +38,14 @@ async def on_ready():
     print(f'{bot.user} has connected to Discord!')
     await setup_table()
     await load_channels()
+    
+    # Sync commands
+    print("Syncing commands...")
     try:
         synced = await bot.tree.sync()
         print(f'Synced {len(synced)} command(s)')
     except Exception as e:
-        print(e)
+        print(f"Failed to sync commands: {str(e)}")
 
 @bot.tree.command(name="set", description="Set this message channel")
 async def set_channel(interaction: discord.Interaction):
@@ -63,6 +68,97 @@ async def unset_channel(interaction: discord.Interaction):
         conn.commit()
     await load_channels()
     await interaction.response.send_message(f"Channel {channel_id} has been unset!", ephemeral=True)
+
+@bot.tree.command(name="old_message", description="แปลงลิงก์ TikTok ในข้อความที่เลือก")
+@app_commands.describe(message="เลือกข้อความที่ต้องการแปลง")
+async def convert_old_message(
+    interaction: discord.Interaction,
+    message: int
+):
+    """แปลงลิงก์ TikTok ในข้อความที่เลือก"""
+    channel = interaction.channel
+    
+    # ตรวจสอบว่าเป็นช่องที่กำหนดไว้หรือไม่
+    if channel.id not in bot.channel_ids:
+        await interaction.response.send_message("คำสั่งนี้ใช้ได้เฉพาะในช่องที่กำหนดเท่านั้น", ephemeral=True)
+        return
+
+    # ดึงข้อความตี่ไม่ใช่ของบอทและมีลิงค์ TikTok
+    messages = []
+    async for msg in channel.history(limit=100):
+        if not msg.author.bot and "http" in msg.content and "tiktok" in msg.content:
+            messages.append(msg)
+            if len(messages) >= 10:
+                break
+
+    if not messages:
+        await interaction.response.send_message("ไม่พบข้อความที่มีลิงก์ TikTok", ephemeral=True)
+        return
+
+    if message >= len(messages):
+        await interaction.response.send_message("ไม่พบข้อความที่เลือก", ephemeral=True)
+        return
+
+    # เลือกข้อความตามลำดับที่ผู้ใช้เลือก
+    selected_msg = messages[message]
+    
+    urls = re.findall(r'https?://\S+', selected_msg.content)
+    
+    if urls:
+        updated_urls = [url.replace("tiktok", "tnktok") for url in urls]
+        await selected_msg.edit(suppress=True)
+        if len(updated_urls) > 1:
+            for url in updated_urls:
+                await selected_msg.reply(f"[-]({url}?addDesc=true)", mention_author=False)
+            await interaction.response.send_message("Done!")
+        else:
+            await interaction.response.send_message(
+                f"[-]({updated_urls[0]}?addDesc=true) {selected_msg.jump_url}"
+            )
+    else:
+        await interaction.response.send_message("No TikTok links found in the message", ephemeral=True)
+
+@convert_old_message.autocomplete('message')
+async def message_number_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> list[app_commands.Choice[int]]:
+    channel = interaction.channel
+    
+    # ดึงข้อความที่ไม่ใช่ของบอทและมีลิงค์ TikTok
+    messages = []
+    async for msg in channel.history(limit=100):
+        # ตรวจสอบว่าไม่ใช่ข้อความของบอทและมีลิงค์ TikTok
+        if not msg.author.bot and "http" in msg.content and "tiktok" in msg.content:
+            messages.append(msg)
+            if len(messages) >= 10:  # เก็บแค่ 10 ข้อความ
+                break
+
+    choices = []
+    for idx, msg in enumerate(messages):
+        # ตัดข้อความให้สั้นลงถ้ายาวเกินไป
+        content = (msg.content[:50] + '...') if len(msg.content) > 50 else msg.content
+        
+        # คำนวณเวลาที่ผ่านมา
+        now = datetime.datetime.now(msg.created_at.tzinfo)
+        delta = now - msg.created_at
+        
+        if delta.days > 0:
+            time_text = f"{delta.days}วันที่แล้ว"
+        elif delta.seconds >= 3600:
+            time_text = f"{delta.seconds // 3600}ชั่วโมงที่แล้ว"
+        elif delta.seconds >= 60:
+            time_text = f"{delta.seconds // 60}นาทีที่แล้ว"
+        else:
+            time_text = f"{delta.seconds}วินาทีที่แล้ว"
+            
+        choice_name = f"{msg.author.display_name} [{time_text}]: {content}"
+        # จำกัดความยาวของ name ตาม Discord API
+        if len(choice_name) > 100:
+            choice_name = choice_name[:97] + "..."
+        choices.append(app_commands.Choice(name=choice_name, value=idx))
+    
+    return choices
 
 @bot.event
 async def on_message(message):
