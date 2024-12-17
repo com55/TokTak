@@ -1,3 +1,4 @@
+<a name="thai"></a>
 # Discord TikTok Link Converter Bot
 
 [🇹🇧 English](#english) | [🇹🇭 Thai](#thai)
@@ -35,18 +36,13 @@ TOKEN=your_discord_bot_token
 
 ## Credits
 - [fxTikTok (tnktok.com)](https://github.com/okdargy/fxtiktok)
-
-
-  
 ---
-
-
-
+<a name="thai"></a>
 # Discord TikTok Link Converter Bot
 
 [🇹🇧 English](#english) | [🇹🇭 Thai](#thai)
 
-<a name="thai"></a>
+
 ## คำอธิบาย
 บอทดิสคอร์ดที่ช่วยแปลงลิงก์ TikTok ให้สามารถดูวิดีโอได้โดยไม่ต้องเข้าแอพ TikTok โดยจะเปลี่ยน domain จาก "tiktok.com" เป็น "tnktok.com"
 
