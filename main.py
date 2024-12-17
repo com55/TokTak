@@ -42,32 +42,34 @@ async def on_ready():
     # Sync commands
     print("Syncing commands...")
     try:
+        bot.tree.add_command(SettingCommand(name="setting", description="Setting command"))
         synced = await bot.tree.sync()
         print(f'Synced {len(synced)} command(s)')
     except Exception as e:
         print(f"Failed to sync commands: {str(e)}")
 
-@bot.tree.command(name="set", description="Set this message channel")
-async def set_channel(interaction: discord.Interaction):
-    """เพิ่ม channel ID ปัจจุบันเข้าสู่ฐานข้อมูล"""
-    channel_id = interaction.channel.id
-    with sqlite3.connect("data.db") as conn:
-        cursor = conn.cursor()
-        cursor.execute("INSERT OR IGNORE INTO channels (channel_id) VALUES (?)", (channel_id,))
-        conn.commit()
-    await load_channels()
-    await interaction.response.send_message(f"Channel {channel_id} has been set!", ephemeral=True)
+class SettingCommand(app_commands.Group):
+    @bot.tree.command(name="set", description="Set this message channel")
+    async def set_channel(interaction: discord.Interaction):
+        """เพิ่ม channel ID ปัจจุบันเข้าสู่ฐานข้อมูล"""
+        channel_id = interaction.channel.id
+        with sqlite3.connect("data.db") as conn:
+            cursor = conn.cursor()
+            cursor.execute("INSERT OR IGNORE INTO channels (channel_id) VALUES (?)", (channel_id,))
+            conn.commit()
+        await load_channels()
+        await interaction.response.send_message(f"Channel {channel_id} has been set!", ephemeral=True)
 
-@bot.tree.command(name="unset", description="Unset this message channel")
-async def unset_channel(interaction: discord.Interaction):
-    """ลบ channel ID ปัจจุบันออกจากฐานข้อมูล"""
-    channel_id = interaction.channel.id
-    with sqlite3.connect("data.db") as conn:
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM channels WHERE channel_id = ?", (channel_id,))
-        conn.commit()
-    await load_channels()
-    await interaction.response.send_message(f"Channel {channel_id} has been unset!", ephemeral=True)
+    @bot.tree.command(name="unset", description="Unset this message channel")
+    async def unset_channel(interaction: discord.Interaction):
+        """ลบ channel ID ปัจจุบันออกจากฐานข้อมูล"""
+        channel_id = interaction.channel.id
+        with sqlite3.connect("data.db") as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM channels WHERE channel_id = ?", (channel_id,))
+            conn.commit()
+        await load_channels()
+        await interaction.response.send_message(f"Channel {channel_id} has been unset!", ephemeral=True)
 
 @bot.tree.command(name="old_message", description="แปลงลิงก์ TikTok ในข้อความที่เลือก")
 @app_commands.describe(message="เลือกข้อความที่ต้องการแปลง")
@@ -178,9 +180,14 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
-try:
-    bot.run(TOKEN)
-except discord.errors.DiscordServerError as e:
-    print(f"Server error: {e}")
-    asyncio.sleep(10)
-    bot.run(TOKEN)
+async def start_bot():  
+    while True:
+        try:
+            await bot.start(TOKEN)
+        except discord.errors.DiscordServerError:
+            print(f"Connection error occurred. Retrying in 10 seconds...")
+            await asyncio.sleep(10)
+        except Exception:
+            pass
+
+asyncio.run(start_bot())
