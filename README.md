@@ -9,8 +9,8 @@ A Discord bot that converts TikTok links to allow video viewing without the TikT
 ## Installation
 1. Clone the project:
 ```bash
-git clone https://github.com/com55/toktak.git
-cd toktak
+git clone https://github.com/com55/TokTak.git
+cd TokTak
 ```
 
 2. Install dependencies:
@@ -48,8 +48,8 @@ TOKEN=your_discord_bot_token
 ## การติดตั้ง
 1. โคลนโปรเจค:
 ```bash
-git clone https://github.com/com55/toktak.git
-cd toktak
+git clone https://github.com/com55/TokTak.git
+cd TokTak
 ```
 
 2. ติดตั้ง dependencies:
