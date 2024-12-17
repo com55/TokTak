@@ -1,9 +1,8 @@
-<a name="thai"></a>
+<a name="english"></a>
 # Discord TikTok Link Converter Bot
 
 [🇹🇧 English](#english) | [🇹🇭 Thai](#thai)
 
-<a name="english"></a>
 ## Description
 A Discord bot that converts TikTok links to allow video viewing without the TikTok app by changing the domain from "tiktok.com" to "tnktok.com"
 
