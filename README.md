@@ -33,7 +33,14 @@ TOKEN=your_discord_bot_token
 - `/unset` - Disable bot operation in the current channel
 - `/old_message` - Convert TikTok links in previous messages (up to 10 messages)
 
+## Credits
+- [fxTikTok (tnktok.com)](https://github.com/okdargy/fxtiktok)
+
+
+  
 ---
+
+
 
 # Discord TikTok Link Converter Bot
 
