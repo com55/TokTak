@@ -172,9 +172,14 @@ async def on_message(message):
 
         if "http" in message.content and "tiktok" in message.content:
             updated_urls = [url.replace("tiktok", "tnktok") for url in urls]
-            await message.edit(suppress=True)
             for url in updated_urls:
-                await message.reply(f"[-]({url}?addDesc=true)", mention_author=False)
+                bot_reply = await message.reply(f"[-]({url}?addDesc=true)", mention_author=False)
+            
+            if bot_reply.embeds:
+                print("Embed detected in the reply!")
+                await message.edit(suppress=True)
+            else:
+                print("No embed detected in the reply.")
 
     await bot.process_commands(message)
 
