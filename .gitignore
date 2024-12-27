@@ -1,3 +1,5 @@
 /toktak.code-workspace
 /data.db
 /.env
+*pycache*
+*debug*

@@ -1,6 +1,7 @@
 import sqlite3
 import os
 import re
+from time import sleep
 from dotenv import load_dotenv
 import asyncio
 import discord
@@ -8,6 +9,11 @@ from discord.ext import commands
 from discord import app_commands
 from discord.ui import Select, View
 import datetime
+import json
+import aiohttp
+import requests
+import io
+
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 
@@ -173,16 +179,52 @@ async def on_message(message):
         if "http" in message.content and "tiktok" in message.content:
             updated_urls = [url.replace("tiktok", "tnktok") for url in urls]
             for url in updated_urls:
-                bot_reply = await message.reply(f"[-]({url}?addDesc=true)", mention_author=False)
+                video_id = await grab_video_id(url)
+                video_url = f'https://fxtiktok-rewrite.dargy.workers.dev/generate/video/{video_id}'
+                # embed_to_send = discord.Embed()
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(video_url) as resp:
+                        if resp.status == 200:
+                            # อ่านข้อมูลจาก URL และเก็บไว้ในหน่วยความจำ (ไม่ต้องบันทึกลงไฟล์)
+                            video_data = await resp.read()
+                            # สร้างไฟล์ชั่วคราวในหน่วยความจำ
+                            file = io.BytesIO(video_data)
+                            file.seek(0)  # รีเซ็ต pointer ไปยังตำแหน่งเริ่มต้นของไฟล์
+                            # ส่งไฟล์ที่เป็นวิดีโอไปยัง Discord โดยใช้ discord.File
+                            await message.reply(embed=message.embeds[0], file=discord.File(file, filename="video.mp4"), mention_author=False)
+                            await message.edit(suppress=True)
+                # bot_reply = await message.reply(f"[-]({url}?addDesc=true)", mention_author=False)
             
-            if bot_reply.embeds:
-                print("Embed detected in the reply!")
-                await message.edit(suppress=True)
-            else:
-                print("No embed detected in the reply.")
+            # await asyncio.sleep(1)
+            # if bot_reply.embeds:
+            #     print("Embed detected in the reply!")
+            #     for embed in bot_reply.embeds:
+            #         embed_data = embed.to_dict()
+            #         await save_debug(embed_data)
+            #     await bot_reply.delete()
+            #     await message.edit(suppress=True)
+            # else:
+            #     print("No embed detected in the reply.")
 
     await bot.process_commands(message)
 
+async def grab_video_id(video_id: str) -> str:
+    # ทำการร้องขอไปยัง TikTok Video URL
+    res = requests.get(f'https://vm.tiktok.com/{video_id}')
+    return res.url.split('/')[-1].split('?')[0]
+
+async def save_debug(data):
+    if os.path.exists("debug.json"):
+        with open("debug.json", "r") as f:
+            existing_data = json.load(f)
+    else:
+        existing_data = []
+
+    existing_data.append(data)
+
+    with open("debug.json", "w") as f:
+        json.dump(existing_data, f, ensure_ascii=False, indent=4)
+                        
 try:
     bot.run(TOKEN)
 except discord.errors.DiscordServerError as e:
