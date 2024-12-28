@@ -8,6 +8,10 @@ from discord.ext import commands
 from discord import app_commands
 from discord.ui import Select, View
 import datetime
+import json
+
+from sympy import Domain
+
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 
@@ -15,6 +19,12 @@ intents = discord.Intents.default()
 intents.message_content = True
 
 bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents, shard_count=2)
+
+fix_domain = {
+        0: "a.tnktok.com",
+        1: "tfxktok.com",
+        2: "vxtiktok.com"
+    }
 
 async def setup_table():
     """สร้างตารางเก็บ channel ID ในฐานข้อมูล SQLite"""
@@ -167,19 +177,57 @@ async def on_message(message):
         return
 
     if message.channel.id in bot.channel_ids:
-        print(f"Content: {message.content!r}")
-        urls = re.findall(r'https?://\S+', message.content)
+        # print(f"Content: {message.content!r}")
+        urls = re.findall(r'https?://\S*tiktok\S+', message.content)
+        print(f"URL: {urls}")
+        
+        if len(urls) > 0:
+            url = urls[0]
+            fix_domain_index = 0
+            updated_url = '/'.join(url.split('/', 3)[:2] + [fix_domain[fix_domain_index]] + url.split('/', 3)[3:])
+            bot_reply = await message.reply(f"[-]({updated_url})", mention_author=False)
 
-        if "http" in message.content and "tiktok" in message.content:
-            updated_urls = [url.replace("tiktok", "tnktok") for url in urls]
-            for url in updated_urls:
-                bot_reply = await message.reply(f"[-]({url}?addDesc=true)", mention_author=False)
-            
-            if bot_reply.embeds:
-                print("Embed detected in the reply!")
-                await message.edit(suppress=True)
-            else:
-                print("No embed detected in the reply.")
+            end_time = asyncio.get_event_loop().time() + 5
+            embed_detect = False
+            while not embed_detect:
+                
+                bot_reply = await message.channel.fetch_message(bot_reply.id)
+                
+                Failed = False
+                
+                if bot_reply.embeds:
+                    embed_data = []
+                    for embed in bot_reply.embeds:
+                        embed_data.append(embed.to_dict())
+                    with open("debug.json", "w") as f:
+                        json.dump(embed_data, f, indent=4)
+                    try:
+                        if embed_data[0]['description'] == 'Failed to get video data from TikTok':
+                            Failed = True
+                            print('Failed')
+                        else:
+                            embed_detect = True
+                    except KeyError:
+                        print("Embed detected in the reply!")
+                        await message.edit(suppress=True)  # แก้ไขข้อความ
+                        embed_detect = True
+                
+                if asyncio.get_event_loop().time() > end_time or Failed:
+                    print('No embed detected in the reply!')
+                    fix_domain_index += 1
+                    url = bot_reply.content.split('](')[1][:-1]
+                    try:
+                        updated_url = '/'.join(url.split('/', 3)[:2] + [fix_domain[fix_domain_index]] + url.split('/', 3)[3:])
+                    except KeyError:
+                        print("No more domain to fix")
+                        await bot_reply.delete()
+                        break
+                    await bot_reply.delete()
+                    bot_reply = await message.reply(f"[-]({updated_url})", mention_author=False)
+                    
+                    end_time = asyncio.get_event_loop().time() + 5
+                    
+                await asyncio.sleep(0.5)
 
     await bot.process_commands(message)
 
