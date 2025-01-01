@@ -263,8 +263,20 @@ async def send_reply(message, url):
     if 'facebook' in url:
         print('Replying facebook video')
         video_url = await get_video(url)
-        video_url and await message.reply(f"{message.jump_url}\n> [Video on Facebook]({video_url})", mention_author=False)
-        await message.edit(suppress=True)
+        if video_url:
+            bot_reply = await message.reply(f"{message.jump_url}\n> [Video on Facebook]({video_url})", mention_author=False)
+            
+            end_time = asyncio.get_event_loop().time() + 5
+            embed_detect = False
+            while not embed_detect:
+                bot_reply = await message.channel.fetch_message(bot_reply.id)
+                if bot_reply.embeds:
+                    await message.edit(suppress=True)  # แก้ไขข้อความ
+                    embed_detect = True
+                if asyncio.get_event_loop().time() > end_time:
+                    await bot_reply.delete()
+                    await message.reply(f"Unable to preview this video:\n> {url}", embed=None, mention_author=False)
+                    break
         
 async def start_bot():  
     while True:
