@@ -1,7 +1,6 @@
 import sqlite3
 import os
 import re
-from uu import Error
 from dotenv import load_dotenv
 import asyncio
 import discord
@@ -263,7 +262,7 @@ async def send_reply(message, url):
                     try:
                         video_url = await get_video(url)
                         await message.reply(f"{message.jump_url}\n> [Video on Tiktok]({video_url})", embed=message.embeds[0], mention_author=False)
-                    except Error as e:
+                    except Exception as e:
                         print(e)
                     await bot_reply.delete()
                     break
