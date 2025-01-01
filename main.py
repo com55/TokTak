@@ -275,7 +275,6 @@ async def send_reply(message, url):
                     embed_detect = True
                 if asyncio.get_event_loop().time() > end_time:
                     await bot_reply.delete()
-                    await message.reply(f"Unable to preview this video:\n> {url}", embed=None, mention_author=False)
                     break
         
 async def start_bot():  
