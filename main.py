@@ -43,7 +43,7 @@ async def get_video(url):
         url (str): The URL of the video to retrieve.
 
     Returns:
-        tuple: A tuple containing the video URL (str or None) and a dictionary with metadata for embedding (dict or None).
+        video_url (str): The url of the video, if not found, will return None. 
     """
     api = "https://devfemibadmus.blackstackhub.com/webmedia/api/"
     headers = {
@@ -67,28 +67,15 @@ async def get_video(url):
                             video_url = data['data']['media'][0]['address']
                         case _ :
                             video_url = None
-                                    
-                    description = data['data']['content'].get('desc')
-                    author_name = data['data']['author'].get('name')
-                    thumbnail_url = data['data']['author'].get('image')
                     
-                    if description is not None:
-                        embed = discord.Embed(
-                            description=description
-                        )
-                        author_name and embed.set_author(name=author_name, url=url)
-                        thumbnail_url and embed.set_thumbnail(url=thumbnail_url)
-                    else:
-                        embed = None
-                    
-                    return video_url, embed
+                    return video_url
                 else:
                     print("Error:", response.status)
                     print("Details:", await response.text())
-                    return None, None
+                    return None
     except aiohttp.ClientError as e:
         print("Network error:", str(e))
-        return None, None
+        return None
     
 @bot.event
 async def on_ready():
@@ -261,7 +248,7 @@ async def send_reply(message, url):
                 except KeyError:
                     try:
                         video_url = await get_video(url)
-                        await message.reply(f"{message.jump_url}\n> [Video on Tiktok]({video_url})", embed=message.embeds[0], mention_author=False)
+                        video_url and await message.reply(f"{message.jump_url}\n> [Video on Tiktok]({video_url})", embed=message.embeds[0], mention_author=False)
                     except Exception as e:
                         print(e)
                     await bot_reply.delete()
@@ -275,8 +262,8 @@ async def send_reply(message, url):
             
     if 'facebook' in url:
         print('Replying facebook video')
-        video_url, embed = await get_video(url)
-        await message.reply(f"{message.jump_url}\n> [Video on Facebook]({video_url})", embed=embed, mention_author=False)
+        video_url = await get_video(url)
+        video_url and await message.reply(f"{message.jump_url}\n> [Video on Facebook]({video_url})", mention_author=False)
         await message.edit(suppress=True)
         
 async def start_bot():  
