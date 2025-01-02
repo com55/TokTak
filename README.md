@@ -1,48 +1,4 @@
-<a name="english"></a>
 # Discord TikTok Link Converter Bot
-
-[🇹🇧 English](#english) | [🇹🇭 Thai](#thai)
-
-## Description
-A Discord bot that converts TikTok links to allow video viewing without the TikTok app by changing the domain from "tiktok.com" to "tnktok.com"
-
-## Installation
-1. Clone the project:
-```bash
-git clone https://github.com/com55/TokTak.git
-cd TokTak
-```
-
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-3. Create a `.env` file and add your bot token:
-```
-TOKEN=your_discord_bot_token
-```
-
-## Usage
-1. Invite the bot to your server
-2. Use `/set` in the channel where you want the bot to operate
-3. When a TikTok link is sent in that channel, the bot will reply with a link that allows video viewing directly in Discord
-
-### Available Commands
-- `/set` - Enable bot operation in the current channel
-- `/unset` - Disable bot operation in the current channel
-- `/old_message` - Convert TikTok links in previous messages (up to 10 messages)
-
-## Credits
-- [fxTikTok (tnktok.com)](https://github.com/okdargy/fxtiktok)
----
-<a name="thai"></a>
-# Discord TikTok Link Converter Bot
-
-[🇹🇧 English](#english) | [🇹🇭 Thai](#thai)
-
-
-## คำอธิบาย
 บอทดิสคอร์ดที่ช่วยแปลงลิงก์ TikTok ให้สามารถดูวิดีโอได้โดยไม่ต้องเข้าแอพ TikTok โดยจะเปลี่ยน domain จาก "tiktok.com" เป็น "tnktok.com"
 
 ## การติดตั้ง
@@ -74,3 +30,4 @@ TOKEN=your_discord_bot_token
 
 ## Credits
 - [fxTikTok (tnktok.com)](https://github.com/okdargy/fxtiktok)
+- https://devfemibadmus.blackstackhub.com/webmedia/
