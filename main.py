@@ -45,13 +45,15 @@ async def get_video(url):
     Returns:
         video_url (str): The url of the video, if not found, will return None. 
     """
-    api = "https://devfemibadmus.blackstackhub.com/webmedia/api/"
+    api = "https://mediasaver.link/webmedia/api/"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 OPR/114.0.0.0"
     }
     payload = aiohttp.FormData()
     payload.add_field("url", url)
     payload.add_field("cut", "true")
+
+    print("Getting video url")
 
     try:
         async with aiohttp.ClientSession() as session:
