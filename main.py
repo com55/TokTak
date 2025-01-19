@@ -12,6 +12,7 @@ import aiohttp
 
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
+db_path = '/data/data.db'
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -20,7 +21,7 @@ bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents, shar
 
 async def setup_table():
     """สร้างตารางเก็บ channel ID ในฐานข้อมูล SQLite"""
-    conn = sqlite3.connect("data.db")
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute("CREATE TABLE IF NOT EXISTS channels (channel_id INTEGER PRIMARY KEY)")
     conn.commit()
@@ -28,7 +29,7 @@ async def setup_table():
 
 async def load_channels():
     """โหลด channel ID จากฐานข้อมูลเข้าสู่ตัวแปร bot.channel_ids"""
-    conn = sqlite3.connect("data.db")
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute("SELECT channel_id FROM channels")
     bot.channel_ids = [row[0] for row in cursor.fetchall()]
@@ -98,7 +99,7 @@ async def on_ready():
 async def set_channel(interaction: discord.Interaction):
     """เพิ่ม channel ID ปัจจุบันเข้าสู่ฐานข้อมูล"""
     channel_id = interaction.channel.id
-    with sqlite3.connect("data.db") as conn:
+    with sqlite3.connect(db_path) as conn:
         cursor = conn.cursor()
         cursor.execute("INSERT OR IGNORE INTO channels (channel_id) VALUES (?)", (channel_id,))
         conn.commit()
@@ -109,7 +110,7 @@ async def set_channel(interaction: discord.Interaction):
 async def unset_channel(interaction: discord.Interaction):
     """ลบ channel ID ปัจจุบันออกจากฐานข้อมูล"""
     channel_id = interaction.channel.id
-    with sqlite3.connect("data.db") as conn:
+    with sqlite3.connect(db_path) as conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM channels WHERE channel_id = ?", (channel_id,))
         conn.commit()
