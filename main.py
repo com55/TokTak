@@ -287,10 +287,13 @@ async def start_bot():
         except discord.errors.DiscordServerError:
             print(f"Connection error occurred. Retrying in 10 seconds...")
             await asyncio.sleep(10)
-        except Exception:
+        except Exception as e:
+            print(f"Error occurred: {str(e)}")
+            await asyncio.sleep(10) 
             pass
 
 try:
+    print("Starting bot...")
     asyncio.run(start_bot())
 except KeyboardInterrupt:
     print("Bot has been stopped.")
