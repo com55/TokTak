@@ -236,7 +236,7 @@ async def send_reply(message, url):
         updated_url = '/'.join(url.split('/', 3)[:2] + [fix_domain[fix_domain_index]] + url.split('/', 3)[3:])
         bot_reply = await message.reply(f"{message.jump_url}\n> [Video on Tiktok]({updated_url})", mention_author=False)
 
-        end_time = asyncio.get_event_loop().time() + 5
+        end_time = asyncio.get_event_loop().time() + 10
         embed_detect = False        
         while not embed_detect:
             bot_reply = await message.channel.fetch_message(bot_reply.id)
@@ -259,7 +259,7 @@ async def send_reply(message, url):
                 await bot_reply.delete()
                 bot_reply = await message.reply(f"{message.jump_url}\n> [Video on Tiktok]({updated_url})", mention_author=False)
                 
-                end_time = asyncio.get_event_loop().time() + 5
+                end_time = asyncio.get_event_loop().time() + 10
                 
             await asyncio.sleep(0.5)
             
