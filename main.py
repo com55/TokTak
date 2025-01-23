@@ -12,7 +12,7 @@ import aiohttp
 
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
-db_path = '/data/data.db'
+db_path = 'data/data.db'
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -35,7 +35,7 @@ async def load_channels():
     bot.channel_ids = [row[0] for row in cursor.fetchall()]
     conn.close()
 
-# use api form https://devfemibadmus.blackstackhub.com/webmedia/
+# use api form https://github.com/devfemibadmus/webmedia
 async def get_video(url):
     """
     Fetch video details and metadata from a given URL.
@@ -61,6 +61,8 @@ async def get_video(url):
             async with session.post(api, headers=headers, data=payload) as response:
                 if response.status == 200:
                     data = await response.json()
+                    with open("debug.json", "w") as debug_file:
+                        json.dump(data, debug_file, indent=4)
 
                     match data['data']['platform']:
                         case 'tiktok':
