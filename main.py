@@ -23,74 +23,61 @@ class Bot(commands.Bot):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.session = None
-        self.db_pool = None
+        self.db = None
     
     async def setup_hook(self):
         self.session = aiohttp.ClientSession()
-        # สร้าง connection pool สำหรับ SQLite
-        self.db_pool = aiosqlite.Pool(db_path, max_size=10)
+        # เชื่อมต่อ SQLite แบบ async
+        self.db = await aiosqlite.connect(db_path)
     
     async def close(self):
         if self.session:
             await self.session.close()
-        if self.db_pool:
-            await self.db_pool.close()
+        if self.db:
+            await self.db.close()
         await super().close()
 
 bot = Bot(command_prefix=commands.when_mentioned, intents=intents, shard_count=2)
 
 async def setup_table():
     """สร้างตารางเก็บ channel ID ในฐานข้อมูล SQLite"""
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    cursor.execute("CREATE TABLE IF NOT EXISTS channels (channel_id INTEGER PRIMARY KEY)")
-    conn.commit()
-    conn.close()
+    async with bot.db.cursor() as cursor:
+        await cursor.execute(
+            "CREATE TABLE IF NOT EXISTS channels (channel_id INTEGER PRIMARY KEY)"
+        )
+        await bot.db.commit()
 
 async def load_channels():
     """โหลด channel ID จากฐานข้อมูลเข้าสู่ตัวแปร bot.channel_ids"""
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    cursor.execute("SELECT channel_id FROM channels")
-    bot.channel_ids = [row[0] for row in cursor.fetchall()]
-    conn.close()
+    async with bot.db.cursor() as cursor:
+        await cursor.execute("SELECT channel_id FROM channels")
+        rows = await cursor.fetchall()
+        bot.channel_ids = [row[0] for row in rows]
 
 # use api form https://github.com/devfemibadmus/webmedia
 async def get_video(url):
-    """
-    Fetch video details and metadata from a given URL with improved error handling.
-    """
-    api = "https://mediasaver.link/webmedia/api/"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    }
-    
-    payload = aiohttp.FormData()
-    payload.add_field("url", url)
-    payload.add_field("cut", "true")
-
+    """Fetch video details from URL"""
     try:
-        async with bot.session.post(api, headers=headers, data=payload, timeout=10) as response:
+        async with bot.session.post(
+            "https://mediasaver.link/webmedia/api/",
+            headers={"User-Agent": "Mozilla/5.0"},
+            data={"url": url, "cut": "true"},
+            timeout=10
+        ) as response:
             if response.status == 200:
                 data = await response.json()
-                
-                # ใช้ dict mapping แทน match-case
-                platform_handlers = {
-                    'tiktok': lambda d: d['data']['videos'][0]['quality_0']['address'],
-                    'facebook': lambda d: d['data']['media'][0]['address']
-                }
-                
-                platform = data['data']['platform']
-                handler = platform_handlers.get(platform)
-                return handler(data) if handler else None
-                
-            return None
-    except asyncio.TimeoutError:
-        print(f"Timeout while fetching video from {url}")
-        return None
+                with open("debug.json", "w") as debug_file:
+                    json.dump(data, debug_file, indent=4)
+                if 'tiktok' in data['data']['platform']:
+                    return data['data']['videos'][0]['quality_0']['address']
+                elif 'facebook' in data['data']['platform']:
+                    return data['data']['media'][0]['address']
+            else:
+                print(f"Error: {response.status}")
+                print(f"Details: {await response.text()}")
     except Exception as e:
         print(f"Error fetching video: {str(e)}")
-        return None
+    return None
 
 @bot.event
 async def on_ready():
@@ -111,23 +98,33 @@ async def on_ready():
 async def set_channel(interaction: discord.Interaction):
     """เพิ่ม channel ID ปัจจุบันเข้าสู่ฐานข้อมูล"""
     channel_id = interaction.channel.id
-    with sqlite3.connect(db_path) as conn:
-        cursor = conn.cursor()
-        cursor.execute("INSERT OR IGNORE INTO channels (channel_id) VALUES (?)", (channel_id,))
-        conn.commit()
+    async with bot.db.cursor() as cursor:
+        await cursor.execute(
+            "INSERT OR IGNORE INTO channels (channel_id) VALUES (?)", 
+            (channel_id,)
+        )
+        await bot.db.commit()
     await load_channels()
-    await interaction.response.send_message(f"Channel {channel_id} has been set!", ephemeral=True)
+    await interaction.response.send_message(
+        f"Channel {channel_id} has been set!", 
+        ephemeral=True
+    )
 
 @bot.tree.command(name="unset", description="Unset this message channel")
 async def unset_channel(interaction: discord.Interaction):
     """ลบ channel ID ปัจจุบันออกจากฐานข้อมูล"""
     channel_id = interaction.channel.id
-    with sqlite3.connect(db_path) as conn:
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM channels WHERE channel_id = ?", (channel_id,))
-        conn.commit()
+    async with bot.db.cursor() as cursor:
+        await cursor.execute(
+            "DELETE FROM channels WHERE channel_id = ?",
+            (channel_id,)
+        )
+        await bot.db.commit()
     await load_channels()
-    await interaction.response.send_message(f"Channel {channel_id} has been unset!", ephemeral=True)
+    await interaction.response.send_message(
+        f"Channel {channel_id} has been unset!",
+        ephemeral=True
+    )
 
 @bot.tree.command(name="old_message", description="แปลงลิงก์ TikTok ในข้อความที่เลือก")
 @app_commands.describe(message="เลือกข้อความที่ต้องการแปลง")
@@ -222,104 +219,96 @@ async def message_number_autocomplete(
 
 @bot.event
 async def on_message(message):
-    """จัดการข้อความที่ส่งมาในช่องที่กำหนด"""
-    if message.author.bot:
-        return
-
-    if message.channel.id in bot.channel_ids:
+    """Handle messages in specified channels"""
+    if not message.author.bot and message.channel.id in bot.channel_ids:
         urls = re.findall(r'https?://\S*(?:tiktok|facebook\.com/share/(?:r|v))\S+', message.content)
-        
-        if urls:
-            for url in urls:
-                print(f"URL: {url}")
-                await send_reply(message,url)
-
+        for url in urls:
+            print(f"url detected: {url}")
+            await send_reply(message, url)
     await bot.process_commands(message)
 
 async def send_reply(message, url):
+    """Handle video URL replies"""
+    async def send_error():
+        error_msg = await message.reply(
+            "**Error: Can't get video url**\n*This message will be deleted in 30 seconds.*",
+            mention_author=False
+        )
+        await asyncio.sleep(30)
+        await error_msg.delete()
+
+    async def try_embed(content):
+        reply = await message.reply(content, mention_author=False)
+        end_time = asyncio.get_event_loop().time() + 10
+        
+        while asyncio.get_event_loop().time() <= end_time:
+            reply = await message.channel.fetch_message(reply.id)
+            if reply.embeds:
+                await message.edit(suppress=True)
+                return True
+            await asyncio.sleep(0.5)
+        
+        await reply.delete()
+        return False
+
     if 'tiktok' in url:
-        await handle_tiktok_reply(message, url)
-    elif 'facebook' in url:
-        await handle_facebook_reply(message, url)
-
-async def handle_tiktok_reply(message, url):
-    fix_domains = ["a.tnktok.com", "tfxktok.com"]
-    
-    for domain in fix_domains:
-        updated_url = '/'.join(url.split('/', 3)[:2] + [domain] + url.split('/', 3)[3:])
-        bot_reply = await message.reply(
-            f"{message.jump_url}\n> [Video on Tiktok]({updated_url})", 
-            mention_author=False
-        )
+        # ลองใช้ domain ที่กำหนดก่อน
+        for domain in ["a.tnktok.com", "tfxktok.com"]:
+            new_url = '/'.join(url.split('/', 3)[:2] + [domain] + url.split('/', 3)[3:])
+            if await try_embed(f"{message.jump_url}\n> [Video on Tiktok]({new_url})"):
+                return
         
-        if await wait_for_embed(message, bot_reply):
-            await message.edit(suppress=True)
-            return
+        # ถ้าไม่สำเร็จ ลองใช้ API
+        if video_url := await get_video(url):
+            await message.reply(
+                f"{message.jump_url}\n> [Video on Tiktok]({video_url})",
+                mention_author=False
+            )
+        else:
+            await send_error()
             
-        await bot_reply.delete()
-    
-    # ถ้าไม่สำเร็จ ลองใช้ API
-    video_url = await get_video(url)
-    if video_url:
-        await message.reply(
-            f"{message.jump_url}\n> [Video on Tiktok]({video_url})", 
-            mention_author=False
-        )
-    else:
-        error_msg = await message.reply(
-            "**Error: Can't get video url**\n*This message will be deleted in 30 seconds.*",
-            mention_author=False
-        )
-        await asyncio.sleep(30)
-        await error_msg.delete()
-
-async def handle_facebook_reply(message, url):
-    video_url = await get_video(url)
-    if not video_url:
-        error_msg = await message.reply(
-            "**Error: Can't get video url**\n*This message will be deleted in 30 seconds.*",
-            mention_author=False
-        )
-        await asyncio.sleep(30)
-        await error_msg.delete()
-        return
-        
-    bot_reply = await message.reply(
-        f"{message.jump_url}\n> [Video on Facebook]({video_url})",
-        mention_author=False
-    )
-    
-    if await wait_for_embed(message, bot_reply):
-        await message.edit(suppress=True)
-    else:
-        await bot_reply.delete()
-
-async def wait_for_embed(message, reply, timeout=10):
-    """รอให้ embed โหลดเสร็จ"""
-    end_time = asyncio.get_event_loop().time() + timeout
-    
-    while asyncio.get_event_loop().time() <= end_time:
-        reply = await message.channel.fetch_message(reply.id)
-        if reply.embeds:
-            return True
-        await asyncio.sleep(0.5)
-    
-    return False
+    elif 'facebook' in url:
+        if video_url := await get_video(url):
+            if not await try_embed(f"{message.jump_url}\n> [Video on Facebook]({video_url})"):
+                await send_error()
+        else:
+            await send_error()
 
 async def start_bot():  
-    while True:
-        try:
-            await bot.start(TOKEN)
-        except discord.errors.DiscordServerError:
-            print(f"Connection error occurred. Retrying in 10 seconds...")
-            await asyncio.sleep(10)
-        except Exception as e:
-            print(f"Error occurred: {str(e)}")
-            await asyncio.sleep(10) 
-            pass
+    try:
+        await bot.start(TOKEN)
+    except discord.errors.DiscordServerError:
+        print(f"Connection error occurred. Retrying in 10 seconds...")
+        await asyncio.sleep(10)
+        return True
+    except Exception as e:
+        print(f"Error occurred: {str(e)}")
+        await asyncio.sleep(10)
+        return True
+    return False
 
-try:
-    print("Starting bot...")
-    asyncio.run(start_bot())
-except KeyboardInterrupt:
-    print("Bot has been stopped.")
+async def cleanup():
+    """ทำความสะอาดการเชื่อมต่อทั้งหมด"""
+    try:
+        if not bot.is_closed():
+            await bot.close()
+        if bot.session and not bot.session.closed:
+            await bot.session.close()
+        if bot.db:
+            await bot.db.close()
+    except Exception as e:
+        print(f"Error during cleanup: {e}")
+
+if __name__ == "__main__":
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    try:
+        print("Starting bot...")
+        loop.run_until_complete(start_bot())
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+        loop.run_until_complete(cleanup())
+    finally:
+        loop.close()
+        print("Bot has been stopped gracefully.")
