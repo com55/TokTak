@@ -9,6 +9,7 @@ from discord import app_commands
 import datetime
 import json
 import aiohttp
+import aiosqlite
 
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
@@ -17,7 +18,26 @@ db_path = 'data/data.db'
 intents = discord.Intents.default()
 intents.message_content = True
 
-bot = commands.Bot(command_prefix=commands.when_mentioned, intents=intents, shard_count=2)
+# สร้าง ClientSession ที่ใช้ร่วมกัน
+class Bot(commands.Bot):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.session = None
+        self.db_pool = None
+    
+    async def setup_hook(self):
+        self.session = aiohttp.ClientSession()
+        # สร้าง connection pool สำหรับ SQLite
+        self.db_pool = aiosqlite.Pool(db_path, max_size=10)
+    
+    async def close(self):
+        if self.session:
+            await self.session.close()
+        if self.db_pool:
+            await self.db_pool.close()
+        await super().close()
+
+bot = Bot(command_prefix=commands.when_mentioned, intents=intents, shard_count=2)
 
 async def setup_table():
     """สร้างตารางเก็บ channel ID ในฐานข้อมูล SQLite"""
@@ -38,50 +58,40 @@ async def load_channels():
 # use api form https://github.com/devfemibadmus/webmedia
 async def get_video(url):
     """
-    Fetch video details and metadata from a given URL.
-
-    Args:
-        url (str): The URL of the video to retrieve.
-
-    Returns:
-        video_url (str): The url of the video, if not found, will return None. 
+    Fetch video details and metadata from a given URL with improved error handling.
     """
     api = "https://mediasaver.link/webmedia/api/"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 OPR/114.0.0.0"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
+    
     payload = aiohttp.FormData()
     payload.add_field("url", url)
     payload.add_field("cut", "true")
 
-    print("Getting video url")
-
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(api, headers=headers, data=payload) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    with open("debug.json", "w") as debug_file:
-                        json.dump(data, debug_file, indent=4)
-
-                    match data['data']['platform']:
-                        case 'tiktok':
-                            video_url = data['data']['videos'][0]['quality_0']['address']
-                            
-                        case 'facebook':
-                            video_url = data['data']['media'][0]['address']
-                        case _ :
-                            video_url = None
-                    
-                    return video_url
-                else:
-                    print("Error:", response.status)
-                    print("Details:", await response.text())
-                    return None
-    except aiohttp.ClientError as e:
-        print("Network error:", str(e))
+        async with bot.session.post(api, headers=headers, data=payload, timeout=10) as response:
+            if response.status == 200:
+                data = await response.json()
+                
+                # ใช้ dict mapping แทน match-case
+                platform_handlers = {
+                    'tiktok': lambda d: d['data']['videos'][0]['quality_0']['address'],
+                    'facebook': lambda d: d['data']['media'][0]['address']
+                }
+                
+                platform = data['data']['platform']
+                handler = platform_handlers.get(platform)
+                return handler(data) if handler else None
+                
+            return None
+    except asyncio.TimeoutError:
+        print(f"Timeout while fetching video from {url}")
         return None
-    
+    except Exception as e:
+        print(f"Error fetching video: {str(e)}")
+        return None
+
 @bot.event
 async def on_ready():
     """ฟังก์ชั่นที่ทำงานเมื่อบอทพร้อมใช้งาน"""
@@ -228,72 +238,74 @@ async def on_message(message):
 
 async def send_reply(message, url):
     if 'tiktok' in url:
-        print('Replying tiktok video')
-        fix_domain = {
-            0: "a.tnktok.com",
-            1: "tfxktok.com"
-        }
-        fix_domain_index = 0
-        
-        updated_url = '/'.join(url.split('/', 3)[:2] + [fix_domain[fix_domain_index]] + url.split('/', 3)[3:])
-        bot_reply = await message.reply(f"{message.jump_url}\n> [Video on Tiktok]({updated_url})", mention_author=False)
+        await handle_tiktok_reply(message, url)
+    elif 'facebook' in url:
+        await handle_facebook_reply(message, url)
 
-        end_time = asyncio.get_event_loop().time() + 10
-        embed_detect = False        
-        while not embed_detect:
-            bot_reply = await message.channel.fetch_message(bot_reply.id)
-            if bot_reply.embeds:
-                await message.edit(suppress=True)  # แก้ไขข้อความ
-                print('Embed detected, Reply success')
-                embed_detect = True
-            
-            if asyncio.get_event_loop().time() > end_time:
-                fix_domain_index += 1
-                try:
-                    updated_url = '/'.join(url.split('/', 3)[:2] + [fix_domain[fix_domain_index]] + url.split('/', 3)[3:])
-                except KeyError:
-                    try:
-                        video_url = await get_video(url)
-                        if video_url:
-                            await message.reply(f"{message.jump_url}\n> [Video on Tiktok]({video_url})", embed=message.embeds[0], mention_author=False)
-                        else:
-                            print('Error: Can\'t get video url')
-                            bot_reply = await message.reply(f"**Error: Can't get video url**\n*This message will be deleted in 30 seconds.*", mention_author=False)
-                            await asyncio.sleep(30)
-                            await bot_reply.delete()
-                    except Exception as e:
-                        print(e)
-                    await bot_reply.delete()
-                    break
-                await bot_reply.delete()
-                bot_reply = await message.reply(f"{message.jump_url}\n> [Video on Tiktok]({updated_url})", mention_author=False)
-                
-                end_time = asyncio.get_event_loop().time() + 10
-                
-            await asyncio.sleep(0.5)
-            
-    if 'facebook' in url:
-        print('Replying facebook video')
-        video_url = await get_video(url)
-        if video_url:
-            bot_reply = await message.reply(f"{message.jump_url}\n> [Video on Facebook]({video_url})", mention_author=False)
-            
-            end_time = asyncio.get_event_loop().time() + 5
-            embed_detect = False
-            while not embed_detect:
-                bot_reply = await message.channel.fetch_message(bot_reply.id)
-                if bot_reply.embeds:
-                    await message.edit(suppress=True)  # แก้ไขข้อความ
-                    embed_detect = True
-                if asyncio.get_event_loop().time() > end_time:
-                    await bot_reply.delete()
-                    break
-        else:
-            print('Error: Can\'t get video url')
-            bot_reply = await message.reply(f"**Error: Can't get video url**\n*This message will be deleted in 30 seconds.*", mention_author=False)
-            await asyncio.sleep(30)
-            await bot_reply.delete()
+async def handle_tiktok_reply(message, url):
+    fix_domains = ["a.tnktok.com", "tfxktok.com"]
+    
+    for domain in fix_domains:
+        updated_url = '/'.join(url.split('/', 3)[:2] + [domain] + url.split('/', 3)[3:])
+        bot_reply = await message.reply(
+            f"{message.jump_url}\n> [Video on Tiktok]({updated_url})", 
+            mention_author=False
+        )
         
+        if await wait_for_embed(message, bot_reply):
+            await message.edit(suppress=True)
+            return
+            
+        await bot_reply.delete()
+    
+    # ถ้าไม่สำเร็จ ลองใช้ API
+    video_url = await get_video(url)
+    if video_url:
+        await message.reply(
+            f"{message.jump_url}\n> [Video on Tiktok]({video_url})", 
+            mention_author=False
+        )
+    else:
+        error_msg = await message.reply(
+            "**Error: Can't get video url**\n*This message will be deleted in 30 seconds.*",
+            mention_author=False
+        )
+        await asyncio.sleep(30)
+        await error_msg.delete()
+
+async def handle_facebook_reply(message, url):
+    video_url = await get_video(url)
+    if not video_url:
+        error_msg = await message.reply(
+            "**Error: Can't get video url**\n*This message will be deleted in 30 seconds.*",
+            mention_author=False
+        )
+        await asyncio.sleep(30)
+        await error_msg.delete()
+        return
+        
+    bot_reply = await message.reply(
+        f"{message.jump_url}\n> [Video on Facebook]({video_url})",
+        mention_author=False
+    )
+    
+    if await wait_for_embed(message, bot_reply):
+        await message.edit(suppress=True)
+    else:
+        await bot_reply.delete()
+
+async def wait_for_embed(message, reply, timeout=10):
+    """รอให้ embed โหลดเสร็จ"""
+    end_time = asyncio.get_event_loop().time() + timeout
+    
+    while asyncio.get_event_loop().time() <= end_time:
+        reply = await message.channel.fetch_message(reply.id)
+        if reply.embeds:
+            return True
+        await asyncio.sleep(0.5)
+    
+    return False
+
 async def start_bot():  
     while True:
         try:
