@@ -254,7 +254,13 @@ async def send_reply(message, url):
                 except KeyError:
                     try:
                         video_url = await get_video(url)
-                        video_url and await message.reply(f"{message.jump_url}\n> [Video on Tiktok]({video_url})", embed=message.embeds[0], mention_author=False)
+                        if video_url:
+                            await message.reply(f"{message.jump_url}\n> [Video on Tiktok]({video_url})", embed=message.embeds[0], mention_author=False)
+                        else:
+                            print('Error: Can\'t get video url')
+                            bot_reply = await message.reply(f"**Error: Can't get video url**\n*This message will be deleted in 30 seconds.*", mention_author=False)
+                            await asyncio.sleep(30)
+                            await bot_reply.delete()
                     except Exception as e:
                         print(e)
                     await bot_reply.delete()
@@ -282,6 +288,11 @@ async def send_reply(message, url):
                 if asyncio.get_event_loop().time() > end_time:
                     await bot_reply.delete()
                     break
+        else:
+            print('Error: Can\'t get video url')
+            bot_reply = await message.reply(f"**Error: Can't get video url**\n*This message will be deleted in 30 seconds.*", mention_author=False)
+            await asyncio.sleep(30)
+            await bot_reply.delete()
         
 async def start_bot():  
     while True:
