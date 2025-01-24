@@ -244,6 +244,7 @@ async def send_reply(message, url):
             bot_reply = await message.channel.fetch_message(bot_reply.id)
             if bot_reply.embeds:
                 await message.edit(suppress=True)  # แก้ไขข้อความ
+                print('Embed detected, Reply success')
                 embed_detect = True
             
             if asyncio.get_event_loop().time() > end_time:
