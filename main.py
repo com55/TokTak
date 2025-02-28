@@ -10,10 +10,31 @@ import datetime
 import json
 import aiohttp
 import aiosqlite
+from module import Facebook, TikTokv2
 
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 db_path = 'data/data.db'
+
+# Mapping EN → TH
+EN_TO_TH = {
+    '1': 'ๅ', '!': '+', '@': '๑', '2': '/', '3': '-', '#': '๒', 
+    '4': 'ภ', '$': '๓', '5': 'ถ', '%': '๔', '6': 'ุ', '^': 'ู', 
+    '7': 'ึ', '&': '฿', '8': 'ค', '*': '๕', '9': 'ต', '(': '๖', 
+    '0': 'จ', ')': '๗', '-': 'ข', '_': '๘', '=': 'ช', '+': '๙', 
+    'q': 'ๆ', 'Q': '๐', 'w': 'ไ', 'W': '"', 'e': 'ำ', 'E': 'ฎ', 
+    'r': 'พ', 'R': 'ฑ', 't': 'ะ', 'T': 'ธ', 'y': 'ั', 'Y': 'ํ', 
+    'u': 'ี', 'U': '๊', 'i': 'ร', 'I': 'ณ', 'o': 'น', 'O': 'ฯ', 
+    'p': 'ย', 'P': 'ญ', '[': 'บ', '{': 'ฐ', ']': 'ล', '}': '|', 
+    '\\': 'ฃ', '|': 'ฅ', 'a': 'ฟ', 'A': 'ฤ', 's': 'ห', 'S': 'ฆ', 
+    'd': 'ก', 'D': 'ฏ', 'f': 'ด', 'F': 'โ', 'g': 'เ', 'G': 'ฌ', 
+    'h': '้', 'H': '็', 'j': '่', 'J': '๋', 'k': 'า', 'K': 'ษ', 
+    'l': 'ส', 'L': 'ศ', ';': 'ว', ':': 'ซ', "'": 'ง', '"': '.', 
+    'z': 'ผ', 'Z': '(', 'x': 'ป', 'X': ')', 'c': 'แ', 'C': 'ฉ', 
+    'v': 'อ', 'V': 'ฮ', 'b': 'ิ', 'B': 'ฺ', 'n': 'ื', 'N': '์', 
+    'm': 'ท', 'M': '?', ',': 'ม', '<': 'ฒ', '.': 'ใ', '>': 'ฬ', 
+    '/': 'ฝ', '?': 'ฦ'
+}
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -57,26 +78,44 @@ async def load_channels():
 # use api form https://github.com/devfemibadmus/webmedia
 async def get_video(url):
     """Fetch video details from URL"""
+    class Validator:
+        tiktok_pattern = r'tiktok\.com/.*/'
+        instag_pattern = r'instagram\.com/(p|reel|tv)/([A-Za-z0-9_-]+)/?'
+        facebook_pattern = r'(facebook\.com/.*/|fb\.watch/.*/)'
+        @staticmethod
+        def validate(url):
+            if re.search(Validator.tiktok_pattern, url):
+                return "TikTok", url
+            if re.search(Validator.facebook_pattern, url):
+                return "Facebook", url
+            insta_match = re.search(Validator.instag_pattern, url)
+            if insta_match:
+                return "Instagram", insta_match.group(2)
+            
+            return "Invalid URL", None
+    
     try:
-        async with bot.session.post(
-            "https://mediasaver.link/webmedia/api/",
-            headers={"User-Agent": "Mozilla/5.0"},
-            data={"url": url, "cut": "true"},
-            timeout=10
-        ) as response:
-            if response.status == 200:
-                data = await response.json()
-                with open("debug.json", "w") as debug_file:
-                    json.dump(data, debug_file, indent=4)
-                if 'tiktok' in data['data']['platform']:
-                    return data['data']['videos'][0]['quality_0']['address']
-                elif 'facebook' in data['data']['platform']:
-                    return data['data']['media'][0]['address']
-            else:
-                print(f"Error: {response.status}")
-                print(f"Details: {await response.text()}")
+        source, item_id = Validator.validate(url)
+        
+        if source == "TikTok":
+            tiktok = TikTokv2(url=url, cut=True)
+            data, status = tiktok.getData()
+        elif source == "Facebook":
+            facebook = Facebook(url=url, cut=True)
+            data, status = facebook.getVideo()
+   
+        if status == 200:
+            with open("debug.json", "w") as debug_file:
+                json.dump(data, debug_file, indent=4)
+            if 'tiktok' in data['platform']:
+                return data['videos'][0]['quality_0']['address']
+            elif 'facebook' in data['platform']:
+                return data['media'][0]['address']
+        else:
+            print(f"Error: {status}")
+            print(f"Details: {data}")
     except Exception as e:
-        print(f"Error fetching video: {str(e)}")
+        print(f"Error fetching video: {e.__traceback__}")
     return None
 
 @bot.event
@@ -94,6 +133,21 @@ async def on_ready():
     except Exception as e:
         print(f"Failed to sync commands: {str(e)}")
 
+# ฟังก์ชันแปลงข้อความ EN → TH
+def translate_en_th(text: str) -> str:
+    translated = []
+    for char in text.lower():  # แปลงเป็นตัวพิมพ์เล็กเพื่อลดความซับซ้อน
+        translated.append(EN_TO_TH.get(char, char))  # ถ้าไม่มีใน mapping ให้ใช้ตัวเดิม
+    return "".join(translated)
+
+# Context Menu Command (คลิกขวาที่ข้อความ)
+@bot.tree.context_menu(name="ไอเชี่ยนี่ลืมเปลี่ยนภาษา")
+async def translate_command(interaction: discord.Interaction, message: discord.Message):
+    translated_text = translate_en_th(message.content)
+    await interaction.response.send_message(
+        f"{message.content}\t**>\t{translated_text}**\n> {message.jump_url}"
+    )
+    
 @bot.tree.command(name="set", description="Set this message channel")
 async def set_channel(interaction: discord.Interaction):
     """เพิ่ม channel ID ปัจจุบันเข้าสู่ฐานข้อมูล"""
