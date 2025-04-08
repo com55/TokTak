@@ -14,7 +14,7 @@ from module import Facebook, TikTokv2
 
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
-db_path = 'data/data.db'
+db_path = 'data.db'
 
 # Mapping EN → TH
 EN_TO_TH = {
@@ -154,7 +154,7 @@ async def set_channel(interaction: discord.Interaction):
     channel_id = interaction.channel.id
     async with bot.db.cursor() as cursor:
         await cursor.execute(
-            "INSERT OR IGNORE INTO channels (channel_id) VALUES (?)", 
+            "DELETE FROM channels WHERE channel_id = ?",
             (channel_id,)
         )
         await bot.db.commit()
@@ -170,7 +170,7 @@ async def unset_channel(interaction: discord.Interaction):
     channel_id = interaction.channel.id
     async with bot.db.cursor() as cursor:
         await cursor.execute(
-            "DELETE FROM channels WHERE channel_id = ?",
+            "INSERT OR IGNORE INTO channels (channel_id) VALUES (?)", 
             (channel_id,)
         )
         await bot.db.commit()
@@ -274,7 +274,7 @@ async def message_number_autocomplete(
 @bot.event
 async def on_message(message):
     """Handle messages in specified channels"""
-    if not message.author.bot and message.channel.id in bot.channel_ids:
+    if not message.author.bot and message.channel.id not in bot.channel_ids:
         urls = re.findall(r'https?://\S*(?:tiktok|facebook\.com/share/(?:r|v))\S+', message.content)
         for url in urls:
             print(f"url detected: {url}")

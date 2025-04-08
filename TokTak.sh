@@ -1,8 +1,11 @@
 #!/bin/bash
 
+# ดึง path ของไฟล์ script นี้เอง
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # กำหนดชื่อ session
 session="TokTak"
-command="cd /root/vscode/TokTak/ && python3 main.py"
+command="cd $DIR && python main.py"
 
 # ตรวจสอบว่า session มีอยู่หรือไม่
 tmux has-session -t $session 2>/dev/null
