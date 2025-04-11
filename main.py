@@ -16,7 +16,6 @@ from module import Facebook, TikTokv2
 
 # Setup discord logging
 logger = logging.getLogger('discord')
-logger.setLevel(logging.INFO)
 
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
@@ -245,7 +244,7 @@ async def on_message(message: discord.Message) -> None:
     """Handle messages in specified channels"""
     if not message.author.bot and message.channel.id not in bot.channel_ids:
         urls = re.findall(
-            f"https?://\\S*(?:{Validator.tiktok_pattern}|{Validator.facebook_pattern})\\S+", 
+            r'https?://[^\s]*?(?:(?:tiktok\.com|facebook\.com|fb\.watch)/\S*)',
             message.content
         )
         for url in urls:
@@ -302,7 +301,7 @@ async def send_reply(message: discord.Message, url: str) -> None:
 
 async def start_bot() -> bool:  
     try:
-        await bot.start(TOKEN)
+        await bot.run(TOKEN)
     except discord.errors.DiscordServerError:
         logger.error("Connection error occurred. Retrying in 10 seconds...")
         await asyncio.sleep(10)
@@ -313,28 +312,5 @@ async def start_bot() -> bool:
         return True
     return False
 
-async def cleanup() -> None:
-    """ทำความสะอาดการเชื่อมต่อทั้งหมด"""
-    try:
-        if not bot.is_closed():
-            await bot.close()
-        if bot.session and not bot.session.closed:
-            await bot.session.close()
-        if bot.db:
-            await bot.db.close()
-    except Exception as e:
-        logger.error("Error during cleanup", exc_info=e)
-
 if __name__ == "__main__":
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
-    try:
-        logger.info("Starting bot...")
-        loop.run_until_complete(start_bot())
-    except KeyboardInterrupt:
-        logger.info("Shutting down...")
-        loop.run_until_complete(cleanup())
-    finally:
-        loop.close()
-        logger.info("Bot has been stopped gracefully.")
+    bot.run(TOKEN)
