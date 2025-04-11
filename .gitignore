@@ -1,7 +1,4 @@
-/*code-workspace
-/data.db
-/.env
+*.db
+*.env
 *debug*
 *pycache*
-/data
-/test.py
