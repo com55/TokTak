@@ -128,7 +128,7 @@ async def translate_command(interaction: discord.Interaction, message: discord.M
         return "".join(translated)
     translated_text = translate_en_th(message.content)
     await interaction.response.send_message(
-        f"{message.content}\t**>\t{translated_text}**\n> {message.jump_url}"
+        f"{message.jump_url}\t{message.content}\n**>\t{translated_text}**"
     )
     
 @bot.tree.command(name="enabled", description="Enabled this message channel")
@@ -171,7 +171,7 @@ async def convert_old_message(
 
     messages = []
     async for msg in channel.history(limit=100):
-        if not msg.author.bot and "http" in msg.content and "tiktok" in msg.content:
+        if not msg.author.bot and "http" in msg.content:
             messages.append(msg)
             if len(messages) >= 10:
                 break
@@ -186,21 +186,32 @@ async def convert_old_message(
 
     selected_msg = messages[message]
     
-    urls = re.findall(r'https?://\S+', selected_msg.content)
-    
-    if urls:
-        updated_urls = [url.replace("tiktok", "tnktok") for url in urls]
-        await selected_msg.edit(suppress=True)
-        if len(updated_urls) > 1:
-            for url in updated_urls:
-                await selected_msg.reply(f"[-]({url}?addDesc=true)", mention_author=False)
-            await interaction.response.send_message("Done!")
-        else:
-            await interaction.response.send_message(
-                f"[-]({updated_urls[0]}?addDesc=true) {selected_msg.jump_url}"
-            )
-    else:
-        await interaction.response.send_message("No TikTok links found in the message", ephemeral=True)
+    urls = re.findall(
+        r'https?://[^"]*?(?:(?:tiktok\.com|facebook\.com|fb\.watch)/\S*)',
+        selected_msg.content
+    )
+
+    if not urls:
+        await interaction.response.send_message("No valid links found in the message", ephemeral=True)
+        return
+
+    for url in urls:
+        logger.info(f"Processing URL: {url}")
+        source, item_id = Validator.validate(url)
+
+        if source == 'TikTok':
+            updated_urls = [url.replace("tiktok", "tnktok") for url in urls]
+            await selected_msg.edit(suppress=True)
+            for updated_url in updated_urls:
+                await selected_msg.reply(f"[-]({updated_url}?addDesc=true)", mention_author=False)
+
+        elif source == 'Facebook':
+            if video_url := await get_video(source, url):
+                await selected_msg.reply(f"> [Video on Facebook]({video_url})", mention_author=False)
+            else:
+                await selected_msg.reply("**Error: Can't get video URL**", mention_author=False)
+
+    await interaction.response.send_message("Processing complete!", ephemeral=True)
 
 @convert_old_message.autocomplete('message')
 async def message_number_autocomplete(
@@ -256,7 +267,7 @@ async def send_reply(message: discord.Message, url: str) -> None:
     """Handle video URL replies"""
     async def send_error() -> None:
         error_msg = await message.reply(
-            "**Error: Can't get video url**\n*This message will be deleted in 30 seconds.*",
+            "**Error: Can't get video url**\n-# *This message will be deleted in 30 seconds.*",
             mention_author=False
         )
         await asyncio.sleep(30)
@@ -281,12 +292,12 @@ async def send_reply(message: discord.Message, url: str) -> None:
     if source == 'TikTok':
         for domain in ["a.tnktok.com", "tfxktok.com"]:
             new_url = '/'.join(url.split('/', 3)[:2] + [domain] + url.split('/', 3)[3:])
-            if await try_embed(f"{message.jump_url}\n> [Video on Tiktok]({new_url})"):
+            if await try_embed(f"> [Video on Tiktok]({new_url})"):
                 return
         
         if video_url := await get_video(source, url):
             await message.reply(
-                f"{message.jump_url}\n> [Video on Tiktok]({video_url})",
+                f"> [Video on Tiktok]({video_url})",
                 mention_author=False
             )
         else:
@@ -294,7 +305,7 @@ async def send_reply(message: discord.Message, url: str) -> None:
             
     if source == 'Facebook':
         if video_url := await get_video(source, url):
-            if not await try_embed(f"{message.jump_url}\n> [Video on Facebook]({video_url})"):
+            if not await try_embed(f"> [Video on Facebook]({video_url})"):
                 await send_error()
         else:
             await send_error()
