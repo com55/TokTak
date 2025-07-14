@@ -1,4 +1,4 @@
-import sqlite3
+
 import os
 import re
 from typing import Optional, Dict, List, Tuple, Any, Union
@@ -6,53 +6,56 @@ from dotenv import load_dotenv
 import asyncio
 import discord
 from discord.ext import commands
-from discord import app_commands
-import datetime
 import json
 import aiohttp
 import aiosqlite
 import logging
+from logging import Logger
+from discord.flags import Intents
 from module import Facebook, TikTokv2
+from module.send_component_v2 import send_facebook_video, send_facebook_image
+from module.utils import json_append
 
 # Setup discord logging
-logger = logging.getLogger('discord')
+logger: Logger = logging.getLogger(name='discord')
 
 load_dotenv()
-TOKEN = os.getenv("TOKEN")
+TOKEN: str = os.environ["TOKEN"]
 db_path = 'data.db'
 
 # Load keyboard mapping
-with open('module/keyboard_map.json', 'r', encoding='utf-8') as f:
-    EN_TO_TH: Dict[str, str] = json.load(f)
+with open(file='module/keyboard_map.json', mode='r', encoding='utf-8') as f:
+    EN_TO_TH: Dict[str, str] = json.load(fp=f)
 
-intents = discord.Intents.default()
+intents: Intents = discord.Intents.default()
 intents.message_content = True
 
 # สร้าง ClientSession ที่ใช้ร่วมกัน
 class Bot(commands.Bot):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.session: Optional[aiohttp.ClientSession] = None
-        self.db: Optional[aiosqlite.Connection] = None
-    
+        self.aiohttp_session: aiohttp.ClientSession
+        self.db: aiosqlite.Connection
+        self.channel_ids = []
+
     async def setup_hook(self) -> None:
-        self.session = aiohttp.ClientSession()
-        self.db = await aiosqlite.connect(db_path)
+        self.aiohttp_session = aiohttp.ClientSession()
+        self.db = await aiosqlite.connect(database=db_path)
     
     async def close(self) -> None:
-        if self.session:
-            await self.session.close()
+        if self.aiohttp_session:
+            await self.aiohttp_session.close()
         if self.db:
             await self.db.close()
         await super().close()
 
-bot = Bot(command_prefix=commands.when_mentioned, intents=intents, shard_count=2)
+bot: Bot = Bot(command_prefix=commands.when_mentioned, intents=intents, shard_count=2)
 
 async def setup_table() -> None:
     """สร้างตารางเก็บ channel ID ในฐานข้อมูล SQLite"""
     async with bot.db.cursor() as cursor:
         await cursor.execute(
-            "CREATE TABLE IF NOT EXISTS channels (channel_id INTEGER PRIMARY KEY)"
+            sql="CREATE TABLE IF NOT EXISTS channels (channel_id INTEGER PRIMARY KEY)"
         )
         await bot.db.commit()
 
@@ -76,9 +79,14 @@ class Validator:
         insta_match = re.search(Validator.instag_pattern, url)
         if insta_match:
             return "Instagram", insta_match.group(2)
-        
         return "Invalid URL", None
-    
+
+def translate_en_th(text: str) -> str:
+    translated = []
+    for char in text:
+        translated.append(EN_TO_TH.get(char, char))
+    return "".join(translated)
+
 async def get_video(source: str, url: str) -> Optional[str]:
     """Fetch video details from URL"""
     try:
@@ -90,8 +98,7 @@ async def get_video(source: str, url: str) -> Optional[str]:
             data, status = facebook.getVideo()
    
         if status == 200:
-            with open("debug.json", "w") as debug_file:
-                json.dump(data, debug_file, indent=4)
+            json_append(data, file="debug.json", max_items=50)
             if 'tiktok' in data['platform']:
                 return data['videos'][0]['quality_0']['address']
             elif 'facebook' in data['platform']:
@@ -101,7 +108,7 @@ async def get_video(source: str, url: str) -> Optional[str]:
             logger.error(f"Details: {data}")
     except Exception as e:
         logger.error("Error fetching video", exc_info=e)
-    return None
+        return None
 
 @bot.event
 async def on_ready() -> None:
@@ -118,19 +125,19 @@ async def on_ready() -> None:
     except Exception as e:
         logger.error("Failed to sync commands", exc_info=e)
 
-
 @bot.tree.context_menu(name="ไอเชี่ยนี่ลืมเปลี่ยนภาษา")
 async def translate_command(interaction: discord.Interaction, message: discord.Message) -> None:
-    def translate_en_th(text: str) -> str:
-        translated = []
-        for char in text.lower():
-            translated.append(EN_TO_TH.get(char, char))
-        return "".join(translated)
     translated_text = translate_en_th(message.content)
-    await interaction.response.send_message(
-        f"{message.jump_url}\t{message.content}\n**>\t{translated_text}**"
+    # ตอบกลับข้อความต้นฉบับ โดยไม่ mention เจ้าของข้อความ
+    await message.reply(
+        f"{translated_text}\n-# {interaction.user.display_name} uses the '{interaction.command.name}' command.",
+        mention_author=False
     )
-    
+    # ตอบ interaction ว่าใช้งานสำเร็จ
+    await interaction.response.send_message("✅ ใช้งานคำสั่งเรียบร้อย", ephemeral=True)
+    await asyncio.sleep(10)
+    await interaction.delete_original_response()
+
 @bot.tree.command(name="enabled", description="Enabled this message channel")
 async def enabled_channel(interaction: discord.Interaction) -> None:
     channel_id = interaction.channel.id
@@ -160,95 +167,6 @@ async def disabled_channel(interaction: discord.Interaction) -> None:
         f"Channel {channel_id} has been unset!",
         ephemeral=True
     )
-
-@bot.tree.command(name="old_message", description="แปลงลิงก์ TikTok ในข้อความที่เลือก")
-@app_commands.describe(message="เลือกข้อความที่ต้องการแปลง")
-async def convert_old_message(
-    interaction: discord.Interaction,
-    message: int
-) -> None:
-    channel = interaction.channel
-
-    messages = []
-    async for msg in channel.history(limit=100):
-        if not msg.author.bot and "http" in msg.content:
-            messages.append(msg)
-            if len(messages) >= 10:
-                break
-
-    if not messages:
-        await interaction.response.send_message("ไม่พบข้อความที่มีลิงก์", ephemeral=True)
-        return
-
-    if message >= len(messages):
-        await interaction.response.send_message("ไม่พบข้อความที่เลือก", ephemeral=True)
-        return
-
-    selected_msg = messages[message]
-    
-    urls = re.findall(
-        r'https?://[^"]*?(?:(?:tiktok\.com|facebook\.com|fb\.watch)/\S*)',
-        selected_msg.content
-    )
-
-    if not urls:
-        await interaction.response.send_message("No valid links found in the message", ephemeral=True)
-        return
-
-    for url in urls:
-        logger.info(f"Processing URL: {url}")
-        source, item_id = Validator.validate(url)
-
-        if source == 'TikTok':
-            updated_urls = [url.replace("tiktok", "tnktok") for url in urls]
-            await selected_msg.edit(suppress=True)
-            for updated_url in updated_urls:
-                await selected_msg.reply(f"[-]({updated_url}?addDesc=true)", mention_author=False)
-
-        elif source == 'Facebook':
-            if video_url := await get_video(source, url):
-                await selected_msg.reply(f"> [Video on Facebook]({video_url})", mention_author=False)
-            else:
-                await selected_msg.reply("**Error: Can't get video URL**", mention_author=False)
-
-    await interaction.response.send_message("Processing complete!", ephemeral=True)
-
-@convert_old_message.autocomplete('message')
-async def message_number_autocomplete(
-    interaction: discord.Interaction,
-    current: str,
-) -> List[app_commands.Choice[int]]:
-    channel = interaction.channel
-    
-    messages = []
-    async for msg in channel.history(limit=100):
-        if not msg.author.bot and "http" in msg.content and "tiktok" in msg.content:
-            messages.append(msg)
-            if len(messages) >= 10:
-                break
-
-    choices = []
-    for idx, msg in enumerate(messages):
-        content = msg.content
-        
-        now = datetime.datetime.now(msg.created_at.tzinfo)
-        delta = now - msg.created_at
-        
-        if delta.days > 0:
-            time_text = f"{delta.days} วันที่แล้ว"
-        elif delta.seconds >= 3600:
-            time_text = f"{delta.seconds // 3600} ชั่วโมงที่แล้ว"
-        elif delta.seconds >= 60:
-            time_text = f"{delta.seconds // 60} นาทีที่แล้ว"
-        else:
-            time_text = f"{delta.seconds} วินาทีที่แล้ว"
-            
-        choice_name = f"{msg.author.display_name} [{time_text}]: {content}"
-        if len(choice_name) > 100:
-            choice_name = choice_name[:97] + "..."
-        choices.append(app_commands.Choice(name=choice_name, value=idx))
-    
-    return choices
 
 @bot.event
 async def on_message(message: discord.Message) -> None:
@@ -286,7 +204,7 @@ async def send_reply(message: discord.Message, url: str) -> None:
         
         await reply.delete()
         return False
-    
+
     source, item_id = Validator.validate(url)
     
     if source == 'TikTok':
@@ -294,7 +212,7 @@ async def send_reply(message: discord.Message, url: str) -> None:
             new_url = '/'.join(url.split('/', 3)[:2] + [domain] + url.split('/', 3)[3:])
             if await try_embed(f"> [Video on Tiktok]({new_url})"):
                 return
-        
+
         if video_url := await get_video(source, url):
             await message.reply(
                 f"> [Video on Tiktok]({video_url})",
@@ -302,17 +220,26 @@ async def send_reply(message: discord.Message, url: str) -> None:
             )
         else:
             await send_error()
-            
+
     if source == 'Facebook':
-        if video_url := await get_video(source, url):
-            if not await try_embed(f"> [Video on Facebook]({video_url})"):
-                await send_error()
+        def is_facebook_video(url: str) -> bool:
+            video_patterns = [
+                "fb.watch", "/watch", "/reel/", "/videos/", "video.php", "story.php", "/share/v/", "/share/r/"
+            ]
+            return any(pattern in url for pattern in video_patterns)
+        if is_facebook_video(url):
+            video_url = await get_video(source, url)
+            success, status, error_msg = await send_facebook_video(TOKEN, message, bot.aiohttp_session, video_url)
         else:
-            await send_error()
+            success, status, error_msg = await send_facebook_image(TOKEN, message, bot.aiohttp_session, url)
+        if success:
+            await message.edit(suppress=True)
+        else:
+            logger.warning(f"Error {status}: {error_msg}")
 
 async def start_bot() -> bool:  
     try:
-        await bot.run(TOKEN)
+        bot.run(TOKEN)
     except discord.errors.DiscordServerError:
         logger.error("Connection error occurred. Retrying in 10 seconds...")
         await asyncio.sleep(10)

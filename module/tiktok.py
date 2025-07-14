@@ -319,4 +319,4 @@ class TikTokv1:
 if __name__ == "__main__":
     test = TikTokv2('https://vt.tiktok.com/ZSMy8NuMg/', True)
     test = test.getData()
-    print(test)
+    print(json.dumps(obj=test, indent=4, ensure_ascii=False))
