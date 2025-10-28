@@ -4,6 +4,8 @@ import requests, json, re
 from bs4 import BeautifulSoup
 from collections.abc import Mapping, Iterable
 
+from module.facebook_cookies import load_cookies_for_aiohttp
+
 def get_nested_value(data, key):
     if isinstance(data, Mapping):
         if key in data:
@@ -44,8 +46,10 @@ class Facebook:
             'Viewport-Width': '1463',
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
         }
+        self.session_cookies = load_cookies_for_aiohttp()
 
     def getVideo(self):
+        
         if any(x in self.url for x in ['fb.watch', '/watch/?v']):
             response = requests.get(self.url)
             try:
@@ -55,7 +59,7 @@ class Facebook:
                 return {'error': True, 'message': 'video not found', 'error_message': str(e)}, 404
 
         try:
-            resp = requests.get(self.url, headers=self.headers)
+            resp = requests.get(self.url, headers=self.headers, cookies=self.session_cookies)
             soup = BeautifulSoup(resp.text, 'html.parser')
             scripts = soup.find_all('script', type='application/json')
 
