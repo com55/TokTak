@@ -45,7 +45,7 @@ async def get_facebook_post_image(url: str) -> Optional[Dict[str, Union[str, Lis
         'Viewport-Width': '1463',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
     }
-    async with aiohttp.ClientSession(cookies=load_cookies_for_aiohttp()) as session:
+    async with aiohttp.ClientSession() as session: #cookies=load_cookies_for_aiohttp()
         async with session.get(url, headers=headers) as response:
             html_content = await response.text()
             pre_soup = BeautifulSoup(html_content, 'html.parser')

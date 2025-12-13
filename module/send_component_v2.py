@@ -41,7 +41,7 @@ async def download_image(session: aiohttp.ClientSession, url: str) -> tuple[byte
         return None, None
 
 async def send_facebook_video(
-    token: str, 
+    discord_bot_token: str, 
     message: discord.Message, 
     session: aiohttp.ClientSession, 
     video_url: str
@@ -49,7 +49,7 @@ async def send_facebook_video(
     """Sends a Facebook video as a message in Discord using the Discord API.
 
     Args:
-        token (str): Discord bot token for authentication
+        discord_bot_token (str): Discord bot token for authentication
         message (discord.Message): The Discord message to reply to
         session (aiohttp.ClientSession): Active aiohttp session for making requests
         video_url (str): URL of the Facebook video to send
@@ -63,7 +63,7 @@ async def send_facebook_video(
     channel_id = message.channel.id
     request_url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
     headers = {
-        "Authorization": f"Bot {token}",
+        "Authorization": f"Bot {discord_bot_token}",
         "Content-Type": "application/json"
     }
     components = ComponentV2Builder()
@@ -84,7 +84,7 @@ async def send_facebook_video(
             return False, resp.status, error_msg
 
 async def send_facebook_image(
-    token: str, 
+    discord_bot_token: str, 
     message: discord.Message, 
     session: aiohttp.ClientSession, 
     facebook_url: str
@@ -92,7 +92,7 @@ async def send_facebook_image(
     """Sends a Facebook image post as a message in Discord using the Discord API.
 
     Args:
-        token (str): Discord bot token for authentication
+        discord_bot_token (str): Discord bot token for authentication
         message (discord.Message): The Discord message to reply to
         session (aiohttp.ClientSession): Active aiohttp session for making requests
         facebook_url (str): URL of the Facebook post containing images
@@ -106,7 +106,7 @@ async def send_facebook_image(
     channel_id = message.channel.id
     request_url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
     headers = {
-        "Authorization": f"Bot {token}"
+        "Authorization": f"Bot {discord_bot_token}"
     }
     max_retrys = 3
     current_retrys = 0

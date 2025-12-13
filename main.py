@@ -185,7 +185,7 @@ async def send_reply(message: discord.Message, url: str) -> None:
     """Handle video URL replies"""
     async def send_error() -> None:
         error_msg = await message.reply(
-            "**Error: Can't get video url**\n-# *This message will be deleted in 30 seconds.*",
+            "**Error: Can't get video url or post detail**\n-# *This message will be deleted in 30 seconds.*",
             mention_author=False
         )
         await asyncio.sleep(30)
@@ -198,6 +198,10 @@ async def send_reply(message: discord.Message, url: str) -> None:
         while asyncio.get_event_loop().time() <= end_time:
             reply = await message.channel.fetch_message(reply.id)
             if reply.embeds:
+                for embed in reply.embeds:
+                    if embed.title == "Log in or sign up to view":
+                        await reply.delete()
+                        return False
                 await message.edit(suppress=True)
                 return True
             await asyncio.sleep(0.5)
@@ -227,6 +231,13 @@ async def send_reply(message: discord.Message, url: str) -> None:
                 "fb.watch", "/watch", "/reel/", "/videos/", "video.php", "story.php", "/share/v/", "/share/r/"
             ]
             return any(pattern in url for pattern in video_patterns)
+        
+        if "facebook.com" in url:
+            facebed_url = re.sub(r'https://(www\.)?facebook\.com/(.*)', r'https://facebed.com/\2', url)
+            logger.info(f"Try to embed with facebed url: {facebed_url}")
+            if await try_embed(f"> [Facebook](<{url}>) - [facebed]({facebed_url})"):
+                return
+        
         if is_facebook_video(url):
             video_url = await get_video(source, url)
             success, status, error_msg = await send_facebook_video(TOKEN, message, bot.aiohttp_session, video_url)
@@ -235,7 +246,7 @@ async def send_reply(message: discord.Message, url: str) -> None:
         if success:
             await message.edit(suppress=True)
         else:
-            logger.warning(f"Error {status}: {error_msg}")
+            await send_error()
 
 async def start_bot() -> bool:  
     try:

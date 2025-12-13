@@ -59,7 +59,7 @@ class Facebook:
                 return {'error': True, 'message': 'video not found', 'error_message': str(e)}, 404
 
         try:
-            resp = requests.get(self.url, headers=self.headers, cookies=self.session_cookies)
+            resp = requests.get(self.url, headers=self.headers) #, cookies=self.session_cookies
             soup = BeautifulSoup(resp.text, 'html.parser')
             scripts = soup.find_all('script', type='application/json')
 
