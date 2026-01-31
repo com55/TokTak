@@ -12,6 +12,7 @@ import aiosqlite
 import logging
 from logging import Logger
 from discord.flags import Intents
+import requests
 from module import Facebook, TikTokv2
 from module.send_component_v2 import send_facebook_video, send_facebook_image
 from module.utils import json_append
@@ -232,11 +233,21 @@ async def send_reply(message: discord.Message, url: str) -> None:
             ]
             return any(pattern in url for pattern in video_patterns)
         
+        if any(x in url for x in ['fb.watch', '/watch/?v']):
+            response = requests.get(url)
+            try:
+                video_id = response.url.split("/videos/")[1].split("/")[0]
+                url = f'https://www.facebook.com/reel/{video_id}'
+            except Exception:
+                pass
+            
         if "facebook.com" in url:
             facebed_url = re.sub(r'https://(www\.)?facebook\.com/(.*)', r'https://facebed.com/\2', url)
-            logger.info(f"Try to embed with facebed url: {facebed_url}")
-            if await try_embed(f"> [Facebook](<{url}>) - [facebed]({facebed_url})"):
-                return
+            response = requests.get(facebed_url)
+            if not "Log in or sign up to view" in response.text:
+                logger.info(f"Try to embed with facebed url: {facebed_url}")
+                if await try_embed(f"> [Facebook](<{url}>) - [facebed]({facebed_url})"):
+                    return
         
         if is_facebook_video(url):
             video_url = await get_video(source, url)
