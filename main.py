@@ -88,6 +88,34 @@ def translate_en_th(text: str) -> str:
         translated.append(EN_TO_TH.get(char, char))
     return "".join(translated)
 
+def translate_with_preserving_syntax(text: str) -> str:
+    # 1. Regex for Discord Syntax (<@123>, <:emoji:123>, <t:123>, etc.)
+    discord_syntax = r'<[a-z]?@?&?!?#?\d+>|<[a-z]?:[a-zA-Z0-9_]+:\d+>|<t:\d+(?::[tTdDfFR])?>|</[a-zA-Z0-9_-]+:\d+>'
+    
+    # 2. Regex for Code Blocks (```code``` or `code`)
+    code_blocks = r'```.*?```|`.*?`'
+    
+    # 3. Regex for URLs (http, https)
+    urls = r'https?://[^\s<>]+'
+    
+    # Combine all patterns using OR (|)
+    # We use flags=re.DOTALL to make sure '.' matches newlines in code blocks
+    combined_pattern = f'({discord_syntax}|{code_blocks}|{urls})'
+    
+    # Split text while keeping the matched patterns
+    parts = re.split(combined_pattern, text, flags=re.DOTALL)
+    translated_parts = []
+    
+    for part in parts:
+        # Check if the part matches any of our "protected" patterns
+        if re.fullmatch(combined_pattern, part, flags=re.DOTALL):
+            translated_parts.append(part)
+        else:
+            # Translate only the parts that are plain text
+            translated_parts.append(translate_en_th(part))
+            
+    return "".join(translated_parts)
+
 async def get_video(source: str, url: str) -> Optional[str]:
     """Fetch video details from URL"""
     try:
@@ -128,16 +156,14 @@ async def on_ready() -> None:
 
 @bot.tree.context_menu(name="ไอเชี่ยนี่ลืมเปลี่ยนภาษา")
 async def translate_command(interaction: discord.Interaction, message: discord.Message) -> None:
-    translated_text = translate_en_th(message.content)
+    translated_text = translate_with_preserving_syntax(message.content)
     # ตอบกลับข้อความต้นฉบับ โดยไม่ mention เจ้าของข้อความ
     await message.reply(
         f"{translated_text}\n-# {interaction.user.display_name} uses the '{interaction.command.name}' command.",
         mention_author=False
     )
     # ตอบ interaction ว่าใช้งานสำเร็จ
-    await interaction.response.send_message("✅ ใช้งานคำสั่งเรียบร้อย", ephemeral=True)
-    await asyncio.sleep(10)
-    await interaction.delete_original_response()
+    await interaction.response.send_message("✅ ใช้งานคำสั่งเรียบร้อย", ephemeral=True, delete_after=10)
 
 @bot.tree.command(name="enabled", description="Enabled this message channel")
 async def enabled_channel(interaction: discord.Interaction) -> None:
