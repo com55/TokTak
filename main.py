@@ -279,12 +279,21 @@ async def send_reply(message: discord.Message, url: str) -> None:
         
         if is_facebook_video(url):
             video_url = await get_video(source, url)
+            if not video_url:
+                logger.error("Facebook video scrape failed: url=%s", url)
             success, status, error_msg = await send_facebook_video(TOKEN, message, bot.aiohttp_session, video_url)
         else:
             success, status, error_msg = await send_facebook_image(TOKEN, message, bot.aiohttp_session, url)
         if success:
             await message.edit(suppress=True)
         else:
+            logger.error(
+                "Facebook reply failed: url=%s type=%s status=%s error=%s",
+                url,
+                "video" if is_facebook_video(url) else "image",
+                status,
+                error_msg[:500],
+            )
             await send_error()
 
 async def start_bot() -> bool:  

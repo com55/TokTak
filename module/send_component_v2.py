@@ -1,5 +1,6 @@
 from typing import Literal
 import json
+import logging
 from logging import Logger
 import aiohttp
 import os
@@ -9,6 +10,8 @@ import discord
 
 from module.facebook_image import get_facebook_post_image
 from .component_v2 import ComponentV2Builder
+
+logger: Logger = logging.getLogger("discord")
 
 DISCORD_COMPONENT_TEXT_LIMIT = 4000
 TRUNCATION_SUFFIX = "..."
@@ -51,10 +54,10 @@ async def download_image(session: aiohttp.ClientSession, url: str) -> tuple[byte
                     filename = f"downloaded_image_{int(time.time())}.jpg"
                 return image_bytes, filename
             else:
-                print(f"Failed to download {url}, status: {response.status}")
+                logger.warning("Failed to download image: status=%s url=%s", response.status, url[:120])
                 return None, None
     except Exception as e:
-        print(f"Error downloading {url}: {e}")
+        logger.warning("Failed to download image: %s url=%s", e, url[:120])
         return None, None
 
 async def send_facebook_video(
@@ -96,9 +99,14 @@ async def send_facebook_video(
     async with session.post(request_url, json=payload, headers=headers) as resp:
         if resp.status in [200, 201]:
             return True, resp.status, ""
-        else:
-            error_msg = await resp.text()
-            return False, resp.status, error_msg
+        error_msg = await resp.text()
+        logger.error(
+            "Discord API rejected Facebook video: status=%s url=%s response=%s",
+            resp.status,
+            video_url[:120],
+            error_msg[:500],
+        )
+        return False, resp.status, error_msg
 
 async def send_facebook_image(
     discord_bot_token: str, 
@@ -132,8 +140,15 @@ async def send_facebook_image(
         post_data = await get_facebook_post_image(facebook_url)
         if not post_data:
             current_retrys += 1
-    
+            logger.warning(
+                "Facebook image scrape returned no data: url=%s retry=%s/%s",
+                facebook_url,
+                current_retrys,
+                max_retrys,
+            )
+
     if not post_data:
+        logger.error("Facebook image scrape failed after retries: url=%s", facebook_url)
         return False, 400, "Failed to get image form Facebook link."
     
     # Download the image bytes and filename
@@ -149,13 +164,25 @@ async def send_facebook_image(
             downloaded_files.append((unique_filename, image_bytes))
     
     if not downloaded_files:
+        logger.error(
+            "Facebook image download failed: url=%s image_urls=%s",
+            facebook_url,
+            len(image_urls),
+        )
         return False, 400, "Failed to download any images."
-    
-    components = ComponentV2Builder()
-    container = components.container(accent_color=0x1877F2)
 
     title_text = f"### [{post_data['post_owner']}]({facebook_url})"
     description_text = _truncate_description_for_discord(title_text, post_data.get('description'))
+    logger.info(
+        "Sending Facebook image post: url=%s images=%s desc_len=%s total_text=%s",
+        facebook_url,
+        len(downloaded_files),
+        len(description_text),
+        len(title_text) + len(description_text),
+    )
+
+    components = ComponentV2Builder()
+    container = components.container(accent_color=0x1877F2)
 
     container.text(title_text)
     container.text(description_text)
@@ -206,6 +233,11 @@ async def send_facebook_image(
     async with session.post(request_url, data=form_data, headers=headers) as resp:
         if resp.status in [200, 201]:
             return True, resp.status, ""
-        else:
-            error_msg = await resp.text()
-            return False, resp.status, error_msg
+        error_msg = await resp.text()
+        logger.error(
+            "Discord API rejected Facebook image post: status=%s url=%s response=%s",
+            resp.status,
+            facebook_url,
+            error_msg[:500],
+        )
+        return False, resp.status, error_msg
