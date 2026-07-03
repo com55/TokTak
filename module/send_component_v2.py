@@ -18,7 +18,7 @@ logger: Logger = logging.getLogger("discord")
 # Discord docs say 4000, but Container + MediaGallery payloads 500 above ~3615.
 DISCORD_COMPONENT_TEXT_LIMIT = 3600
 TRUNCATION_SUFFIX = "..."
-FETCHING_MESSAGE = "> กำลังดึงข้อมูล..."
+FETCHING_MESSAGE = "> Fetching data..."
 ERROR_MESSAGE = (
     "**Error: Can't get video url or post detail**\n"
     "-# *This message will be deleted in 30 seconds.*"
