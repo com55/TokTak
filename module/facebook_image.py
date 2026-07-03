@@ -100,7 +100,7 @@ def _resolve_post_metadata(
     if not owner:
         return None, None
 
-    if desktop_html and og_desc and owner == og_desc.strip():
+    if desktop_html:
         group_name = _extract_entity_name(desktop_html, "Group")
         if group_name:
             author = _extract_owning_profile_name(desktop_html)
@@ -108,9 +108,10 @@ def _resolve_post_metadata(
                 return group_name, author
             return group_name, None
 
-        page_name = _extract_entity_name(desktop_html, "Page")
-        if page_name:
-            return page_name, None
+        if og_desc and owner == og_desc.strip():
+            page_name = _extract_entity_name(desktop_html, "Page")
+            if page_name:
+                return page_name, None
 
     return owner, None
 
