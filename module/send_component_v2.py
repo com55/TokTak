@@ -20,7 +20,7 @@ DISCORD_COMPONENT_TEXT_LIMIT = 3600
 TRUNCATION_SUFFIX = "..."
 FETCHING_MESSAGE = "> Fetching data..."
 ERROR_MESSAGE = (
-    "**Error: Can't get video url or post detail**\n"
+    "**Error: Can't get post detail**\n"
     "-# *This message will be deleted in 30 seconds.*"
 )
 ERROR_DELETE_AFTER_SECONDS = 30
@@ -166,10 +166,10 @@ async def send_facebook_image(
     }
     max_retrys = 3
     current_retrys = 0
-    post_data = {}
-    while not post_data and current_retrys < max_retrys:
+    post_data = None
+    while post_data is None and current_retrys < max_retrys:
         post_data = await get_facebook_post_image(facebook_url)
-        if not post_data:
+        if post_data is None:
             current_retrys += 1
             logger.warning(
                 "Facebook image scrape returned no data: url=%s retry=%s/%s",
@@ -178,32 +178,30 @@ async def send_facebook_image(
                 max_retrys,
             )
 
-    if not post_data:
+    if post_data is None:
         logger.error("Facebook image scrape failed after retries: url=%s", facebook_url)
         return False, 400, "Failed to get image form Facebook link."
-    
-    # Download the image bytes and filename
-    downloaded_files = []
-    image_urls = post_data['images']    
-    
-    # ใช้ enumerate เพื่อให้มี index สำหรับ key `files[i]`
-    for i, url in enumerate(image_urls):
-        image_bytes, filename = await download_image(session, url, FACEBOOK_CDN_HEADERS)
-        if image_bytes and filename:
-            # สร้างชื่อไฟล์ที่ไม่ซ้ำกัน
-            unique_filename = f"{i}_{filename}"
-            downloaded_files.append((unique_filename, image_bytes))
-    
-    if not downloaded_files:
-        logger.error(
-            "Facebook image download failed: url=%s image_urls=%s",
-            facebook_url,
-            len(image_urls),
-        )
-        return False, 400, "Failed to download any images."
 
     title_text = f"### [{post_data['post_owner']}]({facebook_url})"
     description_text = _truncate_description_for_discord(title_text, post_data.get('description'))
+    image_urls = post_data.get("images") or []
+    downloaded_files = []
+
+    if image_urls:
+        for i, url in enumerate(image_urls):
+            image_bytes, filename = await download_image(session, url, FACEBOOK_CDN_HEADERS)
+            if image_bytes and filename:
+                unique_filename = f"{i}_{filename}"
+                downloaded_files.append((unique_filename, image_bytes))
+
+        if not downloaded_files:
+            logger.error(
+                "Facebook image download failed: url=%s image_urls=%s",
+                facebook_url,
+                len(image_urls),
+            )
+            return False, 400, "Failed to download any images."
+
     logger.info(
         "Sending Facebook image post: url=%s images=%s desc_len=%s total_text=%s",
         facebook_url,
@@ -218,13 +216,14 @@ async def send_facebook_image(
     container.text(title_text)
     container.text(description_text)
 
-    container.separator()
+    if downloaded_files:
+        container.separator()
 
-    gallery = container.gallery()
-    for filename, _ in downloaded_files:
-        gallery.media(f"attachment://{filename}")
-    gallery.end_gallery()
-    
+        gallery = container.gallery()
+        for filename, _ in downloaded_files:
+            gallery.media(f"attachment://{filename}")
+        gallery.end_gallery()
+
     remaining_images = post_data.get("extra_images") or 0
     if remaining_images > 0:
         image_word = "image" if remaining_images == 1 else "images"
@@ -245,29 +244,46 @@ async def send_facebook_image(
     payload = components.to_payload()
     payload["content"] = ""
     payload["allowed_mentions"] = NO_MENTIONS_PAYLOAD
-    
-    form_data = aiohttp.FormData()
-    
-    form_data.add_field(
-        'payload_json',
-        json.dumps(payload),
-        content_type='application/json'
-    )
-    
-    for i, (filename, image_bytes) in enumerate(downloaded_files):
+
+    if downloaded_files:
+        form_data = aiohttp.FormData()
+
         form_data.add_field(
-            f'files[{i}]',
-            image_bytes,
-            filename=filename,
-            content_type='image/jpeg' # หรือ image/png, image/gif ตามความเหมาะสม
+            'payload_json',
+            json.dumps(payload),
+            content_type='application/json'
         )
-    
-    async with session.patch(request_url, data=form_data, headers=headers) as resp:
+
+        for i, (filename, image_bytes) in enumerate(downloaded_files):
+            form_data.add_field(
+                f'files[{i}]',
+                image_bytes,
+                filename=filename,
+                content_type='image/jpeg'
+            )
+
+        async with session.patch(request_url, data=form_data, headers=headers) as resp:
+            if resp.status in [200, 201]:
+                return True, resp.status, ""
+            error_msg = await resp.text()
+            logger.error(
+                "Discord API rejected Facebook image post: status=%s url=%s response=%s",
+                resp.status,
+                facebook_url,
+                error_msg[:500],
+            )
+            return False, resp.status, error_msg
+
+    json_headers = {
+        **headers,
+        "Content-Type": "application/json",
+    }
+    async with session.patch(request_url, json=payload, headers=json_headers) as resp:
         if resp.status in [200, 201]:
             return True, resp.status, ""
         error_msg = await resp.text()
         logger.error(
-            "Discord API rejected Facebook image post: status=%s url=%s response=%s",
+            "Discord API rejected Facebook text post: status=%s url=%s response=%s",
             resp.status,
             facebook_url,
             error_msg[:500],

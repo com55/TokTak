@@ -66,6 +66,37 @@ def _clean_owner(title: Optional[str]) -> Optional[str]:
     return re.sub(r"\s*\|\s*Facebook\s*$", "", title).strip() or title
 
 
+def _extract_entity_name(html_content: str, typename: str) -> Optional[str]:
+    pattern = rf'"__typename"\s*:\s*"{typename}"'
+    for match in re.finditer(pattern, html_content):
+        chunk = html_content[match.start(): match.start() + 800]
+        name_match = re.search(r'"name"\s*:\s*"((?:[^"\\]|\\.)*)"', chunk)
+        if not name_match:
+            continue
+        name = _decode_json_string(name_match.group(1))
+        if name and name.strip():
+            return name.strip()
+    return None
+
+
+def _resolve_post_owner(
+    og_title: Optional[str],
+    og_desc: Optional[str],
+    desktop_html: Optional[str],
+) -> Optional[str]:
+    owner = _clean_owner(og_title)
+    if not owner:
+        return None
+
+    if desktop_html and og_desc and owner == og_desc.strip():
+        for typename in ("Group", "Page"):
+            entity_name = _extract_entity_name(desktop_html, typename)
+            if entity_name:
+                return entity_name
+
+    return owner
+
+
 def _normalize_cdn_url(url: str) -> str:
     return html.unescape(url).strip()
 
@@ -94,6 +125,35 @@ STICKER_PATH_TYPES = (
 )
 
 
+def _content_dimensions(url: str) -> Optional[tuple[int, int]]:
+    match = re.search(r"cstp=mx(\d+)x(\d+)", url.lower())
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
+
+
+def _is_better_image_url(candidate: str, current: str) -> bool:
+    candidate_dims = _content_dimensions(candidate)
+    current_dims = _content_dimensions(current)
+    candidate_max = max(candidate_dims) if candidate_dims else 0
+    current_max = max(current_dims) if current_dims else 0
+    if candidate_max != current_max:
+        return candidate_max > current_max
+    return len(candidate) > len(current)
+
+
+def _delivery_dimensions(url: str) -> Optional[tuple[int, int]]:
+    match = re.search(r"ctp=([sp])(\d+)x(\d+)", url.lower())
+    if not match:
+        return None
+    return int(match.group(2)), int(match.group(3))
+
+
+def _is_avatar_thumbnail(url: str) -> bool:
+    dims = _delivery_dimensions(url)
+    return dims is not None and max(dims) <= 64
+
+
 def _is_post_image(url: str) -> bool:
     lowered = url.lower()
     if not url.startswith("http") or url.startswith("data:"):
@@ -105,8 +165,15 @@ def _is_post_image(url: str) -> bool:
     for sticker_type in STICKER_PATH_TYPES:
         if sticker_type in lowered:
             return False
+    if _is_avatar_thumbnail(url):
+        return False
+
+    dimensions = _content_dimensions(url)
+    if dimensions and max(dimensions) >= 300:
+        return True
+
     for skip in (
-        "s40x40", "s32x32", "s120x120", "p32x32", "p50x50",
+        "s40x40", "s32x32", "s120x120", "p32x32", "p50x50", "p34x34", "s34x34",
         "jpg_s40x40", "emoji.php", ".css", ".js", "dst-webp",
     ):
         if skip in lowered:
@@ -162,40 +229,123 @@ def _extract_images_from_regex(html_content: str, limit: int = 5) -> List[str]:
     return _dedupe_images(images)[:limit]
 
 
+def _register_image_candidate(
+    url: str,
+    position: int,
+    best_url: Dict[str, str],
+    first_pos: Dict[str, int],
+    counts: Dict[str, int],
+) -> None:
+    url = _normalize_cdn_url(url)
+    if not _is_post_image(url):
+        return
+
+    file_id = _facebook_file_id(url)
+    if not file_id:
+        return
+
+    counts[file_id] = counts.get(file_id, 0) + 1
+    first_pos.setdefault(file_id, position)
+    if file_id not in best_url or _is_better_image_url(url, best_url[file_id]):
+        best_url[file_id] = url
+
+
+def _find_url_position(html_content: str, url: str) -> int:
+    file_id = _facebook_file_id(url)
+    if file_id:
+        position = html_content.find(file_id)
+        if position >= 0:
+            return position
+
+    bare_url = url.split("?")[0]
+    position = html_content.find(bare_url)
+    return position if position >= 0 else len(html_content)
+
+
 def _collect_post_images_from_html(
     html_content: str,
     limit: int = 5,
+    soup: Optional[BeautifulSoup] = None,
+    overlay: Optional[str] = None,
 ) -> tuple[List[str], int]:
-    pattern = r"https://scontent[^\"'<>\s\\]+"
-    first_pos: Dict[str, int] = {}
     best_url: Dict[str, str] = {}
+    first_pos: Dict[str, int] = {}
     counts: Dict[str, int] = {}
+    img_tag_ids: List[str] = []
 
-    for match in re.finditer(pattern, html_content):
-        url = _normalize_cdn_url(match.group(0).rstrip("\\"))
-        if not _is_post_image(url):
-            continue
+    if soup:
+        for url in _extract_images_from_img_tags(soup, limit=10):
+            position = _find_url_position(html_content, url)
+            _register_image_candidate(url, position, best_url, first_pos, counts)
+            file_id = _facebook_file_id(url)
+            if file_id:
+                img_tag_ids.append(file_id)
 
-        file_id = _facebook_file_id(url)
-        if not file_id:
-            continue
+    for match in re.finditer(r'"uri"\s*:\s*"((?:[^"\\]|\\.)*)"', html_content):
+        decoded = _decode_json_string(match.group(1))
+        if decoded and "scontent" in decoded:
+            _register_image_candidate(decoded, match.start(), best_url, first_pos, counts)
 
-        counts[file_id] = counts.get(file_id, 0) + 1
-        first_pos.setdefault(file_id, match.start())
-        if file_id not in best_url or len(url) > len(best_url[file_id]):
-            best_url[file_id] = url
+    for match in re.finditer(r"https://scontent[^\"'<>\s\\]+", html_content):
+        _register_image_candidate(
+            match.group(0).rstrip("\\"),
+            match.start(),
+            best_url,
+            first_pos,
+            counts,
+        )
 
-    if not counts:
+    if not best_url:
         return [], 0
 
-    min_count = max(min(counts.values()), 5)
-    candidates = [file_id for file_id, count in counts.items() if count >= min_count]
-    if not candidates:
-        candidates = list(counts.keys())
+    if img_tag_ids:
+        gallery_ids: set[str] = set(img_tag_ids)
+        if overlay and not _is_compact_gallery_layout(len(img_tag_ids), overlay):
+            cluster_min = min(first_pos[file_id] for file_id in gallery_ids)
+            cluster_max = max(first_pos[file_id] for file_id in gallery_ids)
+            for file_id, url in best_url.items():
+                if file_id in gallery_ids:
+                    continue
+                dimensions = _content_dimensions(url)
+                if not dimensions or max(dimensions) < 350:
+                    continue
+                if counts.get(file_id, 0) < 3:
+                    continue
+                position = first_pos.get(file_id, 0)
+                if cluster_min - 5000 <= position <= cluster_max + 200000:
+                    gallery_ids.add(file_id)
+        candidates = sorted(gallery_ids, key=lambda file_id: first_pos[file_id])
+    else:
+        high_confidence = [file_id for file_id, count in counts.items() if count >= 5]
+        if not high_confidence:
+            high_confidence = list(best_url.keys())
+        candidates = sorted(high_confidence, key=lambda file_id: first_pos[file_id])
 
-    candidates.sort(key=lambda file_id: first_pos[file_id])
     total = len(candidates)
     return [best_url[file_id] for file_id in candidates[:limit]], total
+
+
+def _has_visible_gallery(soup: BeautifulSoup) -> bool:
+    og_image = _meta_content(soup, "og:image")
+    if og_image and _is_post_image(og_image):
+        return True
+    if _extract_images_from_img_tags(soup):
+        return True
+    if _extract_extra_images(soup):
+        return True
+    return False
+
+
+def _overlay_count(overlay: Optional[str]) -> int:
+    if not overlay:
+        return 0
+    match = re.match(r"^\+(\d+)$", overlay.strip())
+    return int(match.group(1)) if match else 0
+
+
+def _is_compact_gallery_layout(img_tag_count: int, overlay: Optional[str]) -> bool:
+    """Vertical galleries often show only 1-2 thumbs plus a large +N badge."""
+    return img_tag_count <= 2 and _overlay_count(overlay) >= 3
 
 
 def _extract_extra_images(soup: BeautifulSoup) -> Optional[str]:
@@ -206,19 +356,25 @@ def _extract_extra_images(soup: BeautifulSoup) -> Optional[str]:
     return None
 
 
-def _overlay_to_remaining_count(overlay: Optional[str]) -> Optional[int]:
-    """Convert Facebook's +N overlay to remaining images not shown in Discord.
+def _remaining_image_count(
+    overlay: Optional[str],
+    image_count: int,
+    shown_count: int = 5,
+) -> Optional[int]:
+    remaining = max(0, image_count - shown_count)
+    if remaining > 0:
+        return remaining
 
-    The overlay sits on the 5th scraped image (4 full + 1 badge), so subtract 1.
-    """
     if not overlay:
         return None
 
-    match = re.match(r"^\+(\d+)$", overlay.strip())
-    if not match:
+    overlay_n = _overlay_count(overlay)
+    if overlay_n <= 0:
         return None
 
-    remaining = int(match.group(1)) - 1
+    # The +N badge sits on the last visible thumbnail, so subtract 1 from the total.
+    estimated_total = image_count + overlay_n - 1
+    remaining = max(0, estimated_total - min(image_count, shown_count))
     return remaining if remaining > 0 else None
 
 
@@ -259,10 +415,15 @@ def _pick_post_text(candidates: List[str], og_desc: Optional[str]) -> Optional[s
 
     if og_desc:
         preview = og_desc.removesuffix("...").strip()
+        is_truncated = og_desc.rstrip().endswith("...")
         if preview:
             for candidate in candidates:
-                if candidate.startswith(preview) or preview in candidate:
+                if candidate.startswith(preview):
                     return candidate
+                if len(preview) >= 20 and preview in candidate:
+                    return candidate
+            if not is_truncated:
+                return og_desc
 
     return candidates[0]
 
@@ -307,24 +468,30 @@ def _extract_post_data(
     mobile_images = _dedupe_images(mobile_images)
     overlay = _extract_extra_images(soup)
     images = mobile_images
+    has_gallery_signal = _has_visible_gallery(soup)
 
     if desktop_html:
         desktop_soup = _parse_soup(desktop_html)
         if not overlay:
             overlay = _extract_extra_images(desktop_soup)
+        has_gallery_signal = has_gallery_signal or _has_visible_gallery(desktop_soup)
 
-        # Desktop HTML includes comment stickers and sidebar images.
-        # Only scrape extra images when the post itself is a multi-image gallery.
-        if overlay and len(mobile_images) <= 1:
-            desktop_images, _total_image_count = _collect_post_images_from_html(desktop_html)
-            images = _merge_image_lists(mobile_images, desktop_images)
+        if len(mobile_images) <= 1 and has_gallery_signal:
+            desktop_images, total_image_count = _collect_post_images_from_html(
+                desktop_html,
+                soup=desktop_soup,
+                overlay=overlay,
+            )
+            if overlay or total_image_count > 1:
+                images = desktop_images if desktop_images else mobile_images
 
+    shown_count = 5
     return {
-        "post_owner": _clean_owner(og_title),
+        "post_owner": _resolve_post_owner(og_title, og_desc, desktop_html),
         "profile_pic_url": _extract_profile_pic(soup),
         "description": _resolve_description(og_desc, desktop_html),
-        "images": images[:5],
-        "extra_images": _overlay_to_remaining_count(overlay),
+        "images": images[:shown_count],
+        "extra_images": _remaining_image_count(overlay, len(images), shown_count),
     }
 
 
@@ -372,4 +539,4 @@ async def get_facebook_post_image(url: str) -> Optional[Dict[str, Union[str, Lis
             file="debug_image.json",
             max_items=20,
         )
-        return result if result["images"] else None
+        return result if (result["images"] or result.get("description") or result.get("post_owner")) else None
