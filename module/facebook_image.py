@@ -89,6 +89,11 @@ def _dedupe_images(images: List[str]) -> List[str]:
     return unique
 
 
+STICKER_PATH_TYPES = (
+    "t39.1997-",
+)
+
+
 def _is_post_image(url: str) -> bool:
     lowered = url.lower()
     if not url.startswith("http") or url.startswith("data:"):
@@ -97,7 +102,13 @@ def _is_post_image(url: str) -> bool:
         return False
     if not ("scontent" in lowered or "/t39." in lowered or "/t31." in lowered):
         return False
-    for skip in ("s40x40", "s32x32", "p50x50", "jpg_s40x40", "emoji.php", ".css", ".js"):
+    for sticker_type in STICKER_PATH_TYPES:
+        if sticker_type in lowered:
+            return False
+    for skip in (
+        "s40x40", "s32x32", "s120x120", "p32x32", "p50x50",
+        "jpg_s40x40", "emoji.php", ".css", ".js", "dst-webp",
+    ):
         if skip in lowered:
             return False
     return True
@@ -297,12 +308,16 @@ def _extract_post_data(
     overlay = _extract_extra_images(soup)
     images = mobile_images
 
-    if desktop_html and len(mobile_images) <= 1:
+    if desktop_html:
         desktop_soup = _parse_soup(desktop_html)
-        desktop_images, _total_image_count = _collect_post_images_from_html(desktop_html)
-        images = _merge_image_lists(mobile_images, desktop_images)
         if not overlay:
             overlay = _extract_extra_images(desktop_soup)
+
+        # Desktop HTML includes comment stickers and sidebar images.
+        # Only scrape extra images when the post itself is a multi-image gallery.
+        if overlay and len(mobile_images) <= 1:
+            desktop_images, _total_image_count = _collect_post_images_from_html(desktop_html)
+            images = _merge_image_lists(mobile_images, desktop_images)
 
     return {
         "post_owner": _clean_owner(og_title),
