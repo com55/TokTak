@@ -10,6 +10,23 @@ import discord
 from module.facebook_image import get_facebook_post_image
 from .component_v2 import ComponentV2Builder
 
+DISCORD_COMPONENT_TEXT_LIMIT = 4000
+TRUNCATION_SUFFIX = "..."
+
+
+def _truncate_description_for_discord(title: str, description: str | None) -> str:
+    if not description:
+        return ""
+
+    max_description_len = DISCORD_COMPONENT_TEXT_LIMIT - len(title)
+    if max_description_len <= len(TRUNCATION_SUFFIX):
+        return TRUNCATION_SUFFIX[:max_description_len]
+
+    if len(description) <= max_description_len:
+        return description
+
+    return description[:max_description_len - len(TRUNCATION_SUFFIX)] + TRUNCATION_SUFFIX
+
 async def download_image(session: aiohttp.ClientSession, url: str) -> tuple[bytes, str] | tuple[None, None]:
     """Downloads an image from a URL and returns its bytes and filename.
 
@@ -136,9 +153,12 @@ async def send_facebook_image(
     
     components = ComponentV2Builder()
     container = components.container(accent_color=0x1877F2)
-    
-    container.text(f"### [{post_data['post_owner']}]({facebook_url})")
-    container.text(f"{post_data['description']}")
+
+    title_text = f"### [{post_data['post_owner']}]({facebook_url})"
+    description_text = _truncate_description_for_discord(title_text, post_data.get('description'))
+
+    container.text(title_text)
+    container.text(description_text)
 
     container.separator()
 
