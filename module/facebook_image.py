@@ -66,8 +66,13 @@ def _clean_owner(title: Optional[str]) -> Optional[str]:
     return re.sub(r"\s*\|\s*Facebook\s*$", "", title).strip() or title
 
 
+def _normalize_login_text(text: str) -> str:
+    collapsed = re.sub(r"\s+", " ", text.strip().lower())
+    return collapsed.replace("log in to", "log into")
+
+
 _LOGIN_WALL_TITLES = frozenset({
-    "log in to facebook",
+    "log into facebook",
     "log in or sign up to view",
 })
 
@@ -76,17 +81,20 @@ def _is_login_walled(
     og_title: Optional[str],
     og_desc: Optional[str],
     post_owner: Optional[str] = None,
+    description: Optional[str] = None,
 ) -> bool:
     for value in (og_title, post_owner):
         if not value:
             continue
-        title = (_clean_owner(value) or value).strip().lower()
+        title = _normalize_login_text(_clean_owner(value) or value)
         if title in _LOGIN_WALL_TITLES:
             return True
 
-    if og_desc:
-        lowered = og_desc.strip().lower()
-        if lowered.startswith("log in to facebook to start sharing"):
+    for value in (og_desc, description):
+        if not value:
+            continue
+        lowered = _normalize_login_text(value)
+        if lowered.startswith("log into facebook to start sharing"):
             return True
         if lowered.startswith("you must log in to continue"):
             return True
@@ -579,13 +587,19 @@ async def get_facebook_post_image(url: str) -> Optional[Dict[str, Union[str, Lis
 
         og_title = _meta_content(mobile_soup, "og:title")
         og_desc = _meta_content(mobile_soup, "og:description")
-        login_walled = _is_login_walled(og_title, og_desc, result.get("post_owner"))
+        login_walled = _is_login_walled(
+            og_title,
+            og_desc,
+            result.get("post_owner"),
+            result.get("description"),
+        )
         if not login_walled and desktop_for_text:
             desktop_soup = _parse_soup(desktop_for_text)
             login_walled = _is_login_walled(
                 _meta_content(desktop_soup, "og:title"),
                 _meta_content(desktop_soup, "og:description"),
                 result.get("post_owner"),
+                result.get("description"),
             )
 
         json_append(

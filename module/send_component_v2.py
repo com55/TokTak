@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 import time
 import discord
 
-from module.facebook_image import FACEBOOK_CDN_HEADERS, get_facebook_post_image
+from module.facebook_image import FACEBOOK_CDN_HEADERS, get_facebook_post_image, _is_login_walled
 from .component_v2 import ComponentV2Builder
 
 logger: Logger = logging.getLogger("discord")
@@ -181,6 +181,15 @@ async def send_facebook_image(
     if post_data is None:
         logger.error("Facebook image scrape failed after retries: url=%s", facebook_url)
         return False, 400, "Failed to get image form Facebook link."
+
+    if _is_login_walled(
+        None,
+        None,
+        post_data.get("post_owner"),
+        post_data.get("description"),
+    ):
+        logger.warning("Facebook post is login-walled: url=%s", facebook_url)
+        return False, 403, "Facebook post is not accessible."
 
     title_text = f"### [{post_data['post_owner']}]({facebook_url})"
     author_text = post_data.get("post_author")
