@@ -66,6 +66,10 @@ def _clean_owner(title: Optional[str]) -> Optional[str]:
     return re.sub(r"\s*\|\s*Facebook\s*$", "", title).strip() or title
 
 
+def _normalize_cdn_url(url: str) -> str:
+    return html.unescape(url).strip()
+
+
 def _facebook_file_id(url: str) -> Optional[str]:
     match = re.search(r"/(\d+_\d+(?:_\d+)?)_", url)
     if match:
@@ -81,7 +85,7 @@ def _dedupe_images(images: List[str]) -> List[str]:
         if not key or key in seen:
             continue
         seen.add(key)
-        unique.append(url)
+        unique.append(_normalize_cdn_url(url))
     return unique
 
 
@@ -108,7 +112,7 @@ def _extract_images_from_img_tags(soup: BeautifulSoup, limit: int = 5) -> List[s
         if not parent or parent.name != "div" or parent.parent is None or parent.parent.name == "a":
             continue
 
-        src = img.get("src", "")
+        src = _normalize_cdn_url(img.get("src", ""))
         if not _is_post_image(src):
             continue
 
@@ -137,7 +141,7 @@ def _extract_images_from_regex(html_content: str, limit: int = 5) -> List[str]:
     images: List[str] = []
 
     for match in re.finditer(pattern, html_content):
-        url = match.group(0).rstrip("\\")
+        url = _normalize_cdn_url(match.group(0).rstrip("\\"))
         if not _is_post_image(url):
             continue
         images.append(url)
@@ -157,7 +161,7 @@ def _collect_post_images_from_html(
     counts: Dict[str, int] = {}
 
     for match in re.finditer(pattern, html_content):
-        url = match.group(0).rstrip("\\")
+        url = _normalize_cdn_url(match.group(0).rstrip("\\"))
         if not _is_post_image(url):
             continue
 
@@ -266,7 +270,7 @@ def _extract_post_data(
 
     mobile_images: List[str] = []
     if og_image and _is_post_image(og_image):
-        mobile_images.append(og_image)
+        mobile_images.append(_normalize_cdn_url(og_image))
 
     mobile_images.extend(_extract_images_from_img_tags(soup))
 
@@ -304,6 +308,13 @@ async def _fetch_html(
 ) -> tuple[int, str]:
     async with session.get(url, headers=headers, allow_redirects=True) as response:
         return response.status, await response.text()
+
+
+FACEBOOK_CDN_HEADERS = {
+    "User-Agent": MOBILE_USER_AGENT,
+    "Referer": "https://www.facebook.com/",
+    "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+}
 
 
 async def get_facebook_post_image(url: str) -> Optional[Dict[str, Union[str, List[str], None]]]:

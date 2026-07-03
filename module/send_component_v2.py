@@ -1,4 +1,5 @@
 from typing import Literal
+import html
 import json
 import logging
 from logging import Logger
@@ -8,7 +9,7 @@ from urllib.parse import urlparse
 import time
 import discord
 
-from module.facebook_image import get_facebook_post_image
+from module.facebook_image import FACEBOOK_CDN_HEADERS, get_facebook_post_image
 from .component_v2 import ComponentV2Builder
 
 logger: Logger = logging.getLogger("discord")
@@ -31,20 +32,26 @@ def _truncate_description_for_discord(title: str, description: str | None) -> st
 
     return description[:max_description_len - len(TRUNCATION_SUFFIX)] + TRUNCATION_SUFFIX
 
-async def download_image(session: aiohttp.ClientSession, url: str) -> tuple[bytes, str] | tuple[None, None]:
+async def download_image(
+    session: aiohttp.ClientSession,
+    url: str,
+    headers: dict[str, str] | None = None,
+) -> tuple[bytes, str] | tuple[None, None]:
     """Downloads an image from a URL and returns its bytes and filename.
 
     Args:
         session (aiohttp.ClientSession): Active aiohttp session for making requests
         url (str): URL of the image to download
+        headers (dict[str, str] | None): Optional request headers
 
     Returns:
         tuple[bytes, str] | tuple[None, None]: A tuple containing:
             - bytes | None: Image data in bytes if successful, None if failed
             - str | None: Filename if successful, None if failed
     """
+    url = html.unescape(url).strip()
     try:
-        async with session.get(url) as response:
+        async with session.get(url, headers=headers) as response:
             if response.status == 200:
                 # ดึงข้อมูลรูปภาพเป็น bytes
                 image_bytes = await response.read()
@@ -158,7 +165,7 @@ async def send_facebook_image(
     
     # ใช้ enumerate เพื่อให้มี index สำหรับ key `files[i]`
     for i, url in enumerate(image_urls):
-        image_bytes, filename = await download_image(session, url)
+        image_bytes, filename = await download_image(session, url, FACEBOOK_CDN_HEADERS)
         if image_bytes and filename:
             # สร้างชื่อไฟล์ที่ไม่ซ้ำกัน
             unique_filename = f"{i}_{filename}"
