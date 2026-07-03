@@ -66,7 +66,10 @@ def _clean_owner(title: Optional[str]) -> Optional[str]:
     return re.sub(r"\s*\|\s*Facebook\s*$", "", title).strip() or title
 
 
-def _image_key(url: str) -> str:
+def _facebook_file_id(url: str) -> Optional[str]:
+    match = re.search(r"/(\d+_\d+(?:_\d+)?)_", url)
+    if match:
+        return match.group(1)
     return url.split("?")[0]
 
 
@@ -74,8 +77,8 @@ def _dedupe_images(images: List[str]) -> List[str]:
     seen: set[str] = set()
     unique: List[str] = []
     for url in images:
-        key = _image_key(url)
-        if key in seen:
+        key = _facebook_file_id(url)
+        if not key or key in seen:
             continue
         seen.add(key)
         unique.append(url)
@@ -131,19 +134,53 @@ def _extract_images_from_img_tags(soup: BeautifulSoup, limit: int = 5) -> List[s
 
 def _extract_images_from_regex(html_content: str, limit: int = 5) -> List[str]:
     pattern = r"https://scontent[^\"'<>\s\\]+"
-    matches = re.findall(pattern, html_content)
     images: List[str] = []
 
-    for url in matches:
-        url = url.rstrip("\\")
+    for match in re.finditer(pattern, html_content):
+        url = match.group(0).rstrip("\\")
         if not _is_post_image(url):
             continue
-        if url not in images:
-            images.append(url)
-        if len(images) >= limit:
+        images.append(url)
+        if len(_dedupe_images(images)) >= limit:
             break
 
-    return images
+    return _dedupe_images(images)[:limit]
+
+
+def _collect_post_images_from_html(
+    html_content: str,
+    limit: int = 5,
+) -> tuple[List[str], int]:
+    pattern = r"https://scontent[^\"'<>\s\\]+"
+    first_pos: Dict[str, int] = {}
+    best_url: Dict[str, str] = {}
+    counts: Dict[str, int] = {}
+
+    for match in re.finditer(pattern, html_content):
+        url = match.group(0).rstrip("\\")
+        if not _is_post_image(url):
+            continue
+
+        file_id = _facebook_file_id(url)
+        if not file_id:
+            continue
+
+        counts[file_id] = counts.get(file_id, 0) + 1
+        first_pos.setdefault(file_id, match.start())
+        if file_id not in best_url or len(url) > len(best_url[file_id]):
+            best_url[file_id] = url
+
+    if not counts:
+        return [], 0
+
+    min_count = max(min(counts.values()), 5)
+    candidates = [file_id for file_id, count in counts.items() if count >= min_count]
+    if not candidates:
+        candidates = list(counts.keys())
+
+    candidates.sort(key=lambda file_id: first_pos[file_id])
+    total = len(candidates)
+    return [best_url[file_id] for file_id in candidates[:limit]], total
 
 
 def _extract_extra_images(soup: BeautifulSoup) -> Optional[str]:
@@ -211,6 +248,13 @@ def _resolve_description(
     return og_desc
 
 
+def _merge_image_lists(*image_lists: List[str]) -> List[str]:
+    merged: List[str] = []
+    for images in image_lists:
+        merged.extend(images)
+    return _dedupe_images(merged)
+
+
 def _extract_post_data(
     soup: BeautifulSoup,
     html_content: str,
@@ -220,25 +264,36 @@ def _extract_post_data(
     og_title = _meta_content(soup, "og:title")
     og_desc = _meta_content(soup, "og:description")
 
-    images: List[str] = []
+    mobile_images: List[str] = []
     if og_image and _is_post_image(og_image):
-        images.append(og_image)
+        mobile_images.append(og_image)
 
-    for src in _extract_images_from_img_tags(soup):
-        if src not in images:
-            images.append(src)
+    mobile_images.extend(_extract_images_from_img_tags(soup))
 
-    if len(images) <= 1:
-        for src in _extract_images_from_regex(html_content):
-            if src not in images:
-                images.append(src)
+    if len(_dedupe_images(mobile_images)) <= 1:
+        mobile_images.extend(_extract_images_from_regex(html_content))
+
+    mobile_images = _dedupe_images(mobile_images)
+    extra_images = _extract_extra_images(soup)
+    images = mobile_images
+    total_image_count = len(images)
+
+    if desktop_html and len(mobile_images) <= 1:
+        desktop_soup = _parse_soup(desktop_html)
+        desktop_images, total_image_count = _collect_post_images_from_html(desktop_html)
+        images = _merge_image_lists(mobile_images, desktop_images)
+        if not extra_images:
+            extra_images = _extract_extra_images(desktop_soup)
+
+    if total_image_count > 5 and not extra_images:
+        extra_images = f"+{total_image_count - 5}"
 
     return {
         "post_owner": _clean_owner(og_title),
         "profile_pic_url": _extract_profile_pic(soup),
         "description": _resolve_description(og_desc, desktop_html),
-        "images": _dedupe_images(images)[:5],
-        "extra_images": _extract_extra_images(soup),
+        "images": images[:5],
+        "extra_images": extra_images,
     }
 
 
