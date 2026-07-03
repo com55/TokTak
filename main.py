@@ -282,7 +282,11 @@ async def send_reply(message: discord.Message, url: str) -> None:
                 if await try_embed(f"> [Facebook](<{url}>) - [facebed]({facebed_url})"):
                     return
 
-        placeholder = await message.reply(FETCHING_MESSAGE, mention_author=False)
+        placeholder = await message.reply(
+            FETCHING_MESSAGE,
+            mention_author=False,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
 
         try:
             if is_facebook_video(url):

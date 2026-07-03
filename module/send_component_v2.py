@@ -24,6 +24,12 @@ ERROR_MESSAGE = (
     "-# *This message will be deleted in 30 seconds.*"
 )
 ERROR_DELETE_AFTER_SECONDS = 30
+NO_MENTIONS_PAYLOAD = {
+    "parse": [],
+    "replied_user": False,
+    "roles": [],
+    "users": [],
+}
 
 
 def _truncate_description_for_discord(title: str, description: str | None) -> str:
@@ -45,7 +51,10 @@ def _message_edit_url(channel_id: int, message_id: int) -> str:
 
 
 async def edit_facebook_error_reply(reply_message: discord.Message) -> None:
-    await reply_message.edit(content=ERROR_MESSAGE)
+    await reply_message.edit(
+        content=ERROR_MESSAGE,
+        allowed_mentions=discord.AllowedMentions.none(),
+    )
     await asyncio.sleep(ERROR_DELETE_AFTER_SECONDS)
     await reply_message.delete()
 
@@ -115,6 +124,7 @@ async def send_facebook_video(
     components.gallery().media(video_url).end_gallery()
     payload = components.to_payload()
     payload["content"] = ""
+    payload["allowed_mentions"] = NO_MENTIONS_PAYLOAD
     request_url = _message_edit_url(channel_id, reply_message.id)
     async with session.patch(request_url, json=payload, headers=headers) as resp:
         if resp.status in [200, 201]:
@@ -234,6 +244,7 @@ async def send_facebook_image(
 
     payload = components.to_payload()
     payload["content"] = ""
+    payload["allowed_mentions"] = NO_MENTIONS_PAYLOAD
     
     form_data = aiohttp.FormData()
     
