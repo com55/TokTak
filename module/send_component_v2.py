@@ -1,4 +1,5 @@
 from typing import Literal
+import asyncio
 import html
 import json
 import logging
@@ -17,6 +18,12 @@ logger: Logger = logging.getLogger("discord")
 # Discord docs say 4000, but Container + MediaGallery payloads 500 above ~3615.
 DISCORD_COMPONENT_TEXT_LIMIT = 3600
 TRUNCATION_SUFFIX = "..."
+FETCHING_MESSAGE = "> กำลังดึงข้อมูล..."
+ERROR_MESSAGE = (
+    "**Error: Can't get video url or post detail**\n"
+    "-# *This message will be deleted in 30 seconds.*"
+)
+ERROR_DELETE_AFTER_SECONDS = 30
 
 
 def _truncate_description_for_discord(title: str, description: str | None) -> str:
@@ -31,6 +38,16 @@ def _truncate_description_for_discord(title: str, description: str | None) -> st
         return description
 
     return description[:max_description_len - len(TRUNCATION_SUFFIX)] + TRUNCATION_SUFFIX
+
+
+def _message_edit_url(channel_id: int, message_id: int) -> str:
+    return f"https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}"
+
+
+async def edit_facebook_error_reply(reply_message: discord.Message) -> None:
+    await reply_message.edit(content=ERROR_MESSAGE)
+    await asyncio.sleep(ERROR_DELETE_AFTER_SECONDS)
+    await reply_message.delete()
 
 async def download_image(
     session: aiohttp.ClientSession,
@@ -70,7 +87,8 @@ async def download_image(
 
 async def send_facebook_video(
     discord_bot_token: str, 
-    message: discord.Message, 
+    message: discord.Message,
+    reply_message: discord.Message,
     session: aiohttp.ClientSession, 
     video_url: str
 ) -> tuple[bool, int, str]:
@@ -89,7 +107,6 @@ async def send_facebook_video(
             - str: Error message if request failed, empty string if successful
     """
     channel_id = message.channel.id
-    request_url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
     headers = {
         "Authorization": f"Bot {discord_bot_token}",
         "Content-Type": "application/json"
@@ -97,14 +114,9 @@ async def send_facebook_video(
     components = ComponentV2Builder()
     components.gallery().media(video_url).end_gallery()
     payload = components.to_payload()
-    payload['message_reference'] = {
-        'message_id': message.id,
-        'channel_id': channel_id
-    }
-    payload['allowed_mentions'] = {
-        'replied_user': False
-    }
-    async with session.post(request_url, json=payload, headers=headers) as resp:
+    payload["content"] = ""
+    request_url = _message_edit_url(channel_id, reply_message.id)
+    async with session.patch(request_url, json=payload, headers=headers) as resp:
         if resp.status in [200, 201]:
             return True, resp.status, ""
         error_msg = await resp.text()
@@ -118,7 +130,8 @@ async def send_facebook_video(
 
 async def send_facebook_image(
     discord_bot_token: str, 
-    message: discord.Message, 
+    message: discord.Message,
+    reply_message: discord.Message,
     session: aiohttp.ClientSession, 
     facebook_url: str
 ) -> tuple[bool, int, str]:
@@ -137,7 +150,7 @@ async def send_facebook_image(
             - str: Error message if request failed, empty string if successful
     """
     channel_id = message.channel.id
-    request_url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
+    request_url = _message_edit_url(channel_id, reply_message.id)
     headers = {
         "Authorization": f"Bot {discord_bot_token}"
     }
@@ -220,14 +233,7 @@ async def send_facebook_image(
     container.end_container()
 
     payload = components.to_payload()
-    payload['message_reference'] = {
-        'message_id': message.id,
-        'channel_id': channel_id
-    }
-    payload['allowed_mentions'] = {
-        'replied_user': False
-    }
-    # print(json.dumps(payload, ensure_ascii=False, indent=2))
+    payload["content"] = ""
     
     form_data = aiohttp.FormData()
     
@@ -245,7 +251,7 @@ async def send_facebook_image(
             content_type='image/jpeg' # หรือ image/png, image/gif ตามความเหมาะสม
         )
     
-    async with session.post(request_url, data=form_data, headers=headers) as resp:
+    async with session.patch(request_url, data=form_data, headers=headers) as resp:
         if resp.status in [200, 201]:
             return True, resp.status, ""
         error_msg = await resp.text()

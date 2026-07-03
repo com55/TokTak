@@ -14,7 +14,12 @@ from logging import Logger
 from discord.flags import Intents
 import requests
 from module import Facebook, TikTokv2
-from module.send_component_v2 import send_facebook_video, send_facebook_image
+from module.send_component_v2 import (
+    FETCHING_MESSAGE,
+    edit_facebook_error_reply,
+    send_facebook_video,
+    send_facebook_image,
+)
 from module.utils import json_append
 
 # Setup discord logging
@@ -276,25 +281,35 @@ async def send_reply(message: discord.Message, url: str) -> None:
                 logger.info(f"Try to embed with facebed url: {facebed_url}")
                 if await try_embed(f"> [Facebook](<{url}>) - [facebed]({facebed_url})"):
                     return
-        
-        if is_facebook_video(url):
-            video_url = await get_video(source, url)
-            if not video_url:
-                logger.error("Facebook video scrape failed: url=%s", url)
-            success, status, error_msg = await send_facebook_video(TOKEN, message, bot.aiohttp_session, video_url)
-        else:
-            success, status, error_msg = await send_facebook_image(TOKEN, message, bot.aiohttp_session, url)
-        if success:
-            await message.edit(suppress=True)
-        else:
-            logger.error(
-                "Facebook reply failed: url=%s type=%s status=%s error=%s",
-                url,
-                "video" if is_facebook_video(url) else "image",
-                status,
-                error_msg[:500],
-            )
-            await send_error()
+
+        placeholder = await message.reply(FETCHING_MESSAGE, mention_author=False)
+
+        try:
+            if is_facebook_video(url):
+                video_url = await get_video(source, url)
+                if not video_url:
+                    logger.error("Facebook video scrape failed: url=%s", url)
+                success, status, error_msg = await send_facebook_video(
+                    TOKEN, message, placeholder, bot.aiohttp_session, video_url
+                )
+            else:
+                success, status, error_msg = await send_facebook_image(
+                    TOKEN, message, placeholder, bot.aiohttp_session, url
+                )
+            if success:
+                await message.edit(suppress=True)
+            else:
+                logger.error(
+                    "Facebook reply failed: url=%s type=%s status=%s error=%s",
+                    url,
+                    "video" if is_facebook_video(url) else "image",
+                    status,
+                    error_msg[:500],
+                )
+                await edit_facebook_error_reply(placeholder)
+        except Exception:
+            logger.error("Facebook reply crashed: url=%s", url, exc_info=True)
+            await edit_facebook_error_reply(placeholder)
 
 async def start_bot() -> bool:  
     try:
