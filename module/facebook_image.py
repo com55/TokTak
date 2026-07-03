@@ -79,22 +79,40 @@ def _extract_entity_name(html_content: str, typename: str) -> Optional[str]:
     return None
 
 
-def _resolve_post_owner(
+def _extract_owning_profile_name(html_content: str) -> Optional[str]:
+    match = re.search(
+        r'"owning_profile"\s*:\s*\{[^}]*"name"\s*:\s*"((?:[^"\\]|\\.)*)"',
+        html_content,
+    )
+    if not match:
+        return None
+    name = _decode_json_string(match.group(1))
+    return name.strip() if name else None
+
+
+def _resolve_post_metadata(
     og_title: Optional[str],
     og_desc: Optional[str],
     desktop_html: Optional[str],
-) -> Optional[str]:
+) -> tuple[Optional[str], Optional[str]]:
+    """Return (post_owner, post_author). post_author is set for group posts."""
     owner = _clean_owner(og_title)
     if not owner:
-        return None
+        return None, None
 
     if desktop_html and og_desc and owner == og_desc.strip():
-        for typename in ("Group", "Page"):
-            entity_name = _extract_entity_name(desktop_html, typename)
-            if entity_name:
-                return entity_name
+        group_name = _extract_entity_name(desktop_html, "Group")
+        if group_name:
+            author = _extract_owning_profile_name(desktop_html)
+            if author and author != group_name:
+                return group_name, author
+            return group_name, None
 
-    return owner
+        page_name = _extract_entity_name(desktop_html, "Page")
+        if page_name:
+            return page_name, None
+
+    return owner, None
 
 
 def _normalize_cdn_url(url: str) -> str:
@@ -486,8 +504,10 @@ def _extract_post_data(
                 images = desktop_images if desktop_images else mobile_images
 
     shown_count = 5
+    post_owner, post_author = _resolve_post_metadata(og_title, og_desc, desktop_html)
     return {
-        "post_owner": _resolve_post_owner(og_title, og_desc, desktop_html),
+        "post_owner": post_owner,
+        "post_author": post_author,
         "profile_pic_url": _extract_profile_pic(soup),
         "description": _resolve_description(og_desc, desktop_html),
         "images": images[:shown_count],

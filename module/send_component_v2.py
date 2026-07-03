@@ -183,7 +183,11 @@ async def send_facebook_image(
         return False, 400, "Failed to get image form Facebook link."
 
     title_text = f"### [{post_data['post_owner']}]({facebook_url})"
-    description_text = _truncate_description_for_discord(title_text, post_data.get('description'))
+    author_text = post_data.get("post_author")
+    header_text = title_text
+    if author_text:
+        header_text = f"{title_text}\n-# {author_text}"
+    description_text = _truncate_description_for_discord(header_text, post_data.get('description'))
     image_urls = post_data.get("images") or []
     downloaded_files = []
 
@@ -207,13 +211,15 @@ async def send_facebook_image(
         facebook_url,
         len(downloaded_files),
         len(description_text),
-        len(title_text) + len(description_text),
+        len(header_text) + len(description_text),
     )
 
     components = ComponentV2Builder()
     container = components.container(accent_color=0x1877F2)
 
     container.text(title_text)
+    if author_text:
+        container.text(f"-# {author_text}")
     container.text(description_text)
 
     if downloaded_files:
