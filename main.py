@@ -260,17 +260,19 @@ async def send_reply(message: discord.Message, url: str) -> None:
             return any(pattern in url for pattern in video_patterns)
         
         if any(x in url for x in ['fb.watch', '/watch/?v']):
-            response = requests.get(url)
+            async with bot.aiohttp_session.get(url) as resp:
+                redirected_url = str(resp.url)
             try:
-                video_id = response.url.split("/videos/")[1].split("/")[0]
+                video_id = redirected_url.split("/videos/")[1].split("/")[0]
                 url = f'https://www.facebook.com/reel/{video_id}'
             except Exception:
                 pass
-            
+
         if "facebook.com" in url:
             facebed_url = re.sub(r'https://(www\.)?facebook\.com/(.*)', r'https://facebed.com/\2', url)
-            response = requests.get(facebed_url)
-            if not "Log in or sign up to view" in response.text:
+            async with bot.aiohttp_session.get(facebed_url) as resp:
+                facebed_text = await resp.text()
+            if "Log in or sign up to view" not in facebed_text:
                 logger.info(f"Try to embed with facebed url: {facebed_url}")
                 if await try_embed(f"> [Facebook](<{url}>) - [facebed]({facebed_url})"):
                     return
