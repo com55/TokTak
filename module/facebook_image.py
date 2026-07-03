@@ -66,6 +66,34 @@ def _clean_owner(title: Optional[str]) -> Optional[str]:
     return re.sub(r"\s*\|\s*Facebook\s*$", "", title).strip() or title
 
 
+_LOGIN_WALL_TITLES = frozenset({
+    "log in to facebook",
+    "log in or sign up to view",
+})
+
+
+def _is_login_walled(
+    og_title: Optional[str],
+    og_desc: Optional[str],
+    post_owner: Optional[str] = None,
+) -> bool:
+    for value in (og_title, post_owner):
+        if not value:
+            continue
+        title = (_clean_owner(value) or value).strip().lower()
+        if title in _LOGIN_WALL_TITLES:
+            return True
+
+    if og_desc:
+        lowered = og_desc.strip().lower()
+        if lowered.startswith("log in to facebook to start sharing"):
+            return True
+        if lowered.startswith("you must log in to continue"):
+            return True
+
+    return False
+
+
 def _extract_entity_name(html_content: str, typename: str) -> Optional[str]:
     pattern = rf'"__typename"\s*:\s*"{typename}"'
     for match in re.finditer(pattern, html_content):
@@ -549,6 +577,17 @@ async def get_facebook_post_image(url: str) -> Optional[Dict[str, Union[str, Lis
 
         result = _extract_post_data(mobile_soup, mobile_html, desktop_for_text)
 
+        og_title = _meta_content(mobile_soup, "og:title")
+        og_desc = _meta_content(mobile_soup, "og:description")
+        login_walled = _is_login_walled(og_title, og_desc, result.get("post_owner"))
+        if not login_walled and desktop_for_text:
+            desktop_soup = _parse_soup(desktop_for_text)
+            login_walled = _is_login_walled(
+                _meta_content(desktop_soup, "og:title"),
+                _meta_content(desktop_soup, "og:description"),
+                result.get("post_owner"),
+            )
+
         json_append(
             data={
                 "url": url,
@@ -556,8 +595,11 @@ async def get_facebook_post_image(url: str) -> Optional[Dict[str, Union[str, Lis
                 "mobile_status": mobile_status,
                 "desktop_status": desktop_status,
                 "description_len": len(result["description"] or ""),
+                "login_walled": login_walled,
             },
             file="debug_image.json",
             max_items=20,
         )
+        if login_walled:
+            return None
         return result if (result["images"] or result.get("description") or result.get("post_owner")) else None
