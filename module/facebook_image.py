@@ -1,12 +1,10 @@
 import html
 import json
-import os
 import re
 from typing import Dict, List, Optional, Union
 
 import aiohttp
 from bs4 import BeautifulSoup
-from yarl import URL
 
 from .utils import json_append
 
@@ -28,18 +26,19 @@ FACEBOOK_HEADERS = {
     "Upgrade-Insecure-Requests": "1",
 }
 
-COOKIES_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "facebook_cookies.json")
-
-
-def _load_cookies() -> Dict[str, str]:
-    if not os.path.exists(COOKIES_PATH):
-        return {}
-    try:
-        with open(COOKIES_PATH, encoding="utf-8") as f:
-            cookies_list = json.load(f)
-        return {cookie["name"]: cookie["value"] for cookie in cookies_list}
-    except (OSError, json.JSONDecodeError, KeyError, TypeError):
-        return {}
+DESKTOP_HEADERS = {
+    **FACEBOOK_HEADERS,
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,"
+        "image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+    ),
+    "Dnt": "1",
+    "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
+    "Sec-Fetch-User": "?1",
+    "User-Agent": DESKTOP_USER_AGENT,
+}
 
 
 def _build_headers(user_agent: str) -> Dict[str, str]:
@@ -68,7 +67,6 @@ def _clean_owner(title: Optional[str]) -> Optional[str]:
 
 
 def _image_key(url: str) -> str:
-    """Normalize image URLs so resized variants count as one image."""
     return url.split("?")[0]
 
 
@@ -164,7 +162,60 @@ def _extract_profile_pic(soup: BeautifulSoup) -> Optional[str]:
     return None
 
 
-def _extract_post_data(soup: BeautifulSoup, html_content: str) -> Dict[str, Union[str, List[str], None]]:
+def _decode_json_string(value: str) -> Optional[str]:
+    try:
+        return json.loads(f'"{value}"')
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
+def _extract_text_candidates(html_content: str) -> List[str]:
+    candidates: List[str] = []
+    seen: set[str] = set()
+
+    for match in re.findall(r'"text"\s*:\s*"((?:[^"\\]|\\.)*)"', html_content):
+        decoded = _decode_json_string(match)
+        if not decoded or len(decoded) < 20:
+            continue
+        if decoded in seen:
+            continue
+        seen.add(decoded)
+        candidates.append(decoded)
+
+    return sorted(candidates, key=len, reverse=True)
+
+
+def _pick_post_text(candidates: List[str], og_desc: Optional[str]) -> Optional[str]:
+    if not candidates:
+        return None
+
+    if og_desc:
+        preview = og_desc.removesuffix("...").strip()
+        if preview:
+            for candidate in candidates:
+                if candidate.startswith(preview) or preview in candidate:
+                    return candidate
+
+    return candidates[0]
+
+
+def _resolve_description(
+    og_desc: Optional[str],
+    desktop_html: Optional[str],
+) -> Optional[str]:
+    if desktop_html:
+        full_text = _pick_post_text(_extract_text_candidates(desktop_html), og_desc)
+        if full_text:
+            return full_text
+
+    return og_desc
+
+
+def _extract_post_data(
+    soup: BeautifulSoup,
+    html_content: str,
+    desktop_html: Optional[str] = None,
+) -> Dict[str, Union[str, List[str], None]]:
     og_image = _meta_content(soup, "og:image")
     og_title = _meta_content(soup, "og:title")
     og_desc = _meta_content(soup, "og:description")
@@ -185,7 +236,7 @@ def _extract_post_data(soup: BeautifulSoup, html_content: str) -> Dict[str, Unio
     return {
         "post_owner": _clean_owner(og_title),
         "profile_pic_url": _extract_profile_pic(soup),
-        "description": og_desc,
+        "description": _resolve_description(og_desc, desktop_html),
         "images": _dedupe_images(images)[:5],
         "extra_images": _extract_extra_images(soup),
     }
@@ -194,9 +245,8 @@ def _extract_post_data(soup: BeautifulSoup, html_content: str) -> Dict[str, Unio
 async def _fetch_html(
     session: aiohttp.ClientSession,
     url: str,
-    user_agent: str,
+    headers: Dict[str, str],
 ) -> tuple[int, str]:
-    headers = _build_headers(user_agent)
     async with session.get(url, headers=headers, allow_redirects=True) as response:
         return response.status, await response.text()
 
@@ -205,27 +255,27 @@ async def get_facebook_post_image(url: str) -> Optional[Dict[str, Union[str, Lis
     """
     Scrapes image and post information from a Facebook post URL.
 
-    Uses mobile User-Agent first because Facebook often blocks desktop scraping.
-    Falls back to desktop HTML parsing for multi-image posts when available.
+    Uses mobile User-Agent for images/metadata and desktop HTML for full post text.
     """
-    cookies = _load_cookies()
-    cookie_jar = aiohttp.CookieJar()
-    if cookies:
-        cookie_jar.update_cookies(cookies, response_url=URL("https://www.facebook.com"))
-
-    async with aiohttp.ClientSession(cookie_jar=cookie_jar) as session:
-        mobile_status, mobile_html = await _fetch_html(session, url, MOBILE_USER_AGENT)
+    async with aiohttp.ClientSession() as session:
+        mobile_status, mobile_html = await _fetch_html(
+            session, url, _build_headers(MOBILE_USER_AGENT)
+        )
         mobile_soup = _parse_soup(mobile_html)
-        result = _extract_post_data(mobile_soup, mobile_html)
 
-        if not result["images"] and mobile_status != 200:
-            desktop_status, desktop_html = await _fetch_html(session, url, DESKTOP_USER_AGENT)
-            if desktop_status == 200:
-                desktop_soup = _parse_soup(desktop_html)
-                result = _extract_post_data(desktop_soup, desktop_html)
+        desktop_status, desktop_html = await _fetch_html(session, url, DESKTOP_HEADERS)
+        desktop_for_text = desktop_html if desktop_status == 200 else None
+
+        result = _extract_post_data(mobile_soup, mobile_html, desktop_for_text)
 
         json_append(
-            data={"url": url, "output": result, "mobile_status": mobile_status},
+            data={
+                "url": url,
+                "output": result,
+                "mobile_status": mobile_status,
+                "desktop_status": desktop_status,
+                "description_len": len(result["description"] or ""),
+            },
             file="debug_image.json",
             max_items=20,
         )
