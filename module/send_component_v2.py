@@ -13,7 +13,8 @@ from .component_v2 import ComponentV2Builder
 
 logger: Logger = logging.getLogger("discord")
 
-DISCORD_COMPONENT_TEXT_LIMIT = 4000
+# Discord docs say 4000, but Container + MediaGallery payloads 500 above ~3615.
+DISCORD_COMPONENT_TEXT_LIMIT = 3600
 TRUNCATION_SUFFIX = "..."
 
 
