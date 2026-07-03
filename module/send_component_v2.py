@@ -202,10 +202,17 @@ async def send_facebook_image(
         gallery.media(f"attachment://{filename}")
     gallery.end_gallery()
     
+    remaining_images = post_data.get("extra_images") or 0
+    if remaining_images > 0:
+        image_word = "image" if remaining_images == 1 else "images"
+        button_label = f"And more {remaining_images} {image_word} on Facebook"
+    else:
+        button_label = "View on Facebook"
+
     action_row = container.action_row()
     action_row.button(
         style=5,
-        label=f"And more {post_data['extra_images'][1:]} images on Facebook" if post_data['extra_images'] else "View on Facebook",
+        label=button_label,
         url=facebook_url
     )
     action_row.end_action_row()

@@ -195,6 +195,22 @@ def _extract_extra_images(soup: BeautifulSoup) -> Optional[str]:
     return None
 
 
+def _overlay_to_remaining_count(overlay: Optional[str]) -> Optional[int]:
+    """Convert Facebook's +N overlay to remaining images not shown in Discord.
+
+    The overlay sits on the 5th scraped image (4 full + 1 badge), so subtract 1.
+    """
+    if not overlay:
+        return None
+
+    match = re.match(r"^\+(\d+)$", overlay.strip())
+    if not match:
+        return None
+
+    remaining = int(match.group(1)) - 1
+    return remaining if remaining > 0 else None
+
+
 def _extract_profile_pic(soup: BeautifulSoup) -> Optional[str]:
     for link in soup.find_all("link", {"as": "image"}):
         href = link.get("href", "")
@@ -278,26 +294,22 @@ def _extract_post_data(
         mobile_images.extend(_extract_images_from_regex(html_content))
 
     mobile_images = _dedupe_images(mobile_images)
-    extra_images = _extract_extra_images(soup)
+    overlay = _extract_extra_images(soup)
     images = mobile_images
-    total_image_count = len(images)
 
     if desktop_html and len(mobile_images) <= 1:
         desktop_soup = _parse_soup(desktop_html)
-        desktop_images, total_image_count = _collect_post_images_from_html(desktop_html)
+        desktop_images, _total_image_count = _collect_post_images_from_html(desktop_html)
         images = _merge_image_lists(mobile_images, desktop_images)
-        if not extra_images:
-            extra_images = _extract_extra_images(desktop_soup)
-
-    if total_image_count > 5 and not extra_images:
-        extra_images = f"+{total_image_count - 5}"
+        if not overlay:
+            overlay = _extract_extra_images(desktop_soup)
 
     return {
         "post_owner": _clean_owner(og_title),
         "profile_pic_url": _extract_profile_pic(soup),
         "description": _resolve_description(og_desc, desktop_html),
         "images": images[:5],
-        "extra_images": extra_images,
+        "extra_images": _overlay_to_remaining_count(overlay),
     }
 
 
