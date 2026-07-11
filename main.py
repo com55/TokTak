@@ -241,6 +241,29 @@ async def send_reply(message: discord.Message, url: str) -> None:
         await reply.delete()
         return False
 
+    async def try_facebed_embed(facebook_url: str) -> bool:
+        if "facebook.com" not in facebook_url:
+            return False
+        facebed_url = re.sub(
+            r'https://(www\.)?facebook\.com/(.*)',
+            r'https://facebed.com/\2',
+            facebook_url,
+        )
+        async with bot.aiohttp_session.get(facebed_url) as resp:
+            facebed_text = await resp.text()
+        if "Log in or sign up to view" not in facebed_text:
+            logger.info("Try to embed with facebed url: %s", facebed_url)
+            return await try_embed(
+                f"> [Facebook](<{facebook_url}>) - [facebed]({facebed_url})"
+            )
+        return False
+
+    async def handle_facebook_image_failure(placeholder: discord.Message) -> None:
+        await placeholder.delete()
+        if await try_facebed_embed(url):
+            return
+        await send_error()
+
     source, item_id = Validator.validate(url)
     
     if source == 'TikTok':
@@ -273,14 +296,10 @@ async def send_reply(message: discord.Message, url: str) -> None:
             except Exception:
                 pass
 
-        if "facebook.com" in url:
-            facebed_url = re.sub(r'https://(www\.)?facebook\.com/(.*)', r'https://facebed.com/\2', url)
-            async with bot.aiohttp_session.get(facebed_url) as resp:
-                facebed_text = await resp.text()
-            if "Log in or sign up to view" not in facebed_text:
-                logger.info(f"Try to embed with facebed url: {facebed_url}")
-                if await try_embed(f"> [Facebook](<{url}>) - [facebed]({facebed_url})"):
-                    return
+        is_video = is_facebook_video(url)
+
+        if is_video and await try_facebed_embed(url):
+            return
 
         placeholder = await message.reply(
             FETCHING_MESSAGE,
@@ -289,7 +308,7 @@ async def send_reply(message: discord.Message, url: str) -> None:
         )
 
         try:
-            if is_facebook_video(url):
+            if is_video:
                 video_url = await get_video(source, url)
                 if not video_url:
                     logger.error("Facebook video scrape failed: url=%s", url)
@@ -302,18 +321,25 @@ async def send_reply(message: discord.Message, url: str) -> None:
                 )
             if success:
                 await message.edit(suppress=True)
-            else:
-                logger.error(
-                    "Facebook reply failed: url=%s type=%s status=%s error=%s",
-                    url,
-                    "video" if is_facebook_video(url) else "image",
-                    status,
-                    error_msg[:500],
-                )
+                return
+
+            logger.error(
+                "Facebook reply failed: url=%s type=%s status=%s error=%s",
+                url,
+                "video" if is_video else "image",
+                status,
+                error_msg[:500],
+            )
+            if is_video:
                 await edit_facebook_error_reply(placeholder)
+            else:
+                await handle_facebook_image_failure(placeholder)
         except Exception:
             logger.error("Facebook reply crashed: url=%s", url, exc_info=True)
-            await edit_facebook_error_reply(placeholder)
+            if is_video:
+                await edit_facebook_error_reply(placeholder)
+            else:
+                await handle_facebook_image_failure(placeholder)
 
 async def start_bot() -> bool:  
     try:
