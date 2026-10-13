@@ -229,23 +229,29 @@ async def send_reply(message: discord.Message, url: str) -> None:
         await asyncio.sleep(30)
         await error_msg.delete()
 
-    async def try_embed(content: str) -> bool:
-        reply = await message.reply(content, mention_author=False)
+    async def try_embed(content: str, placeholder: Optional[discord.Message] = None) -> bool:
+        """Post content (or edit it into placeholder) and wait for Discord to embed it"""
+        if placeholder:
+            reply = await placeholder.edit(content=content, allowed_mentions=discord.AllowedMentions.none())
+        else:
+            reply = await message.reply(content, mention_author=False)
         end_time = asyncio.get_event_loop().time() + 10
+        embedded = False
         
         while asyncio.get_event_loop().time() <= end_time:
             reply = await message.channel.fetch_message(reply.id)
             if reply.embeds:
-                for embed in reply.embeds:
-                    if embed.title == "Log in or sign up to view":
-                        await reply.delete()
-                        return False
-                await message.edit(suppress=True)
-                return True
+                embedded = not any(embed.title == "Log in or sign up to view" for embed in reply.embeds)
+                break
             await asyncio.sleep(0.5)
-        
-        await reply.delete()
-        return False
+
+        if embedded:
+            await message.edit(suppress=True)
+        elif placeholder:
+            await placeholder.edit(content=FETCHING_MESSAGE)
+        else:
+            await reply.delete()
+        return embedded
 
     async def embed_media_ok(fixer_url: str) -> bool:
         """Fetch fixer_url as Discord's crawler would and check it yields real media"""
@@ -297,29 +303,36 @@ async def send_reply(message: discord.Message, url: str) -> None:
 
     source, item_id = Validator.validate(url)
     
-    if source == 'TikTok':
-        for domain in ["a.tnktok.com", "tfxktok.com"]:
-            new_url = '/'.join(url.split('/', 3)[:2] + [domain] + url.split('/', 3)[3:])
-            if not await embed_media_ok(new_url):
-                continue
-            if await try_embed(f"> [Video on Tiktok]({new_url})"):
-                return
+    if source in ('TikTok', 'Instagram'):
+        placeholder = await message.reply(
+            FETCHING_MESSAGE,
+            mention_author=False,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+        try:
+            if source == 'TikTok':
+                for domain in ["a.tnktok.com", "tfxktok.com"]:
+                    new_url = '/'.join(url.split('/', 3)[:2] + [domain] + url.split('/', 3)[3:])
+                    if not await embed_media_ok(new_url):
+                        continue
+                    if await try_embed(f"> [Video on Tiktok]({new_url})", placeholder):
+                        return
 
-        if video_url := await get_video(source, url):
-            await message.reply(
-                f"> [Video on Tiktok]({video_url})",
-                mention_author=False
-            )
-        else:
-            await send_error()
-
-    if source == 'Instagram':
-        for domain in ["zzinstagram.com", "eeinstagram.com"]:
-            fixer_url = urlparse(url)._replace(netloc=domain, query='').geturl()
-            if await embed_media_ok(fixer_url):
-                logger.info("Try to embed with instagram fixer: %s", fixer_url)
-                if await try_embed(f"> [Post on Instagram]({fixer_url})"):
+                if video_url := await get_video(source, url):
+                    await placeholder.edit(content=f"> [Video on Tiktok]({video_url})")
                     return
+
+            if source == 'Instagram':
+                for domain in ["zzinstagram.com", "eeinstagram.com"]:
+                    fixer_url = urlparse(url)._replace(netloc=domain, query='').geturl()
+                    if await embed_media_ok(fixer_url):
+                        logger.info("Try to embed with instagram fixer: %s", fixer_url)
+                        if await try_embed(f"> [Post on Instagram]({fixer_url})", placeholder):
+                            return
+        except Exception:
+            logger.error("%s reply crashed: url=%s", source, url, exc_info=True)
+
+        await placeholder.delete()
         await send_error()
 
     if source == 'Facebook':
