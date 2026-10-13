@@ -13,10 +13,11 @@ import logging
 from logging import Logger
 from discord.flags import Intents
 import requests
+import html
+from urllib.parse import urljoin, urlparse
 from module import Facebook, TikTokv2
 from module.send_component_v2 import (
     FETCHING_MESSAGE,
-    edit_facebook_error_reply,
     send_facebook_video,
     send_facebook_image,
 )
@@ -77,13 +78,18 @@ class Validator:
     instag_pattern = r'instagram\.com/(p|reel|tv)/([A-Za-z0-9_-]+)/?'
     facebook_pattern = r'(facebook\.com/|fb\.watch/)'
     @staticmethod
+    def _host_in(url: str, *domains: str) -> bool:
+        host = urlparse(url).hostname or ''
+        return any(host == d or host.endswith('.' + d) for d in domains)
+
+    @staticmethod
     def validate(url: str) -> Tuple[str, Optional[str]]:
-        if re.search(Validator.tiktok_pattern, url):
+        if Validator._host_in(url, 'tiktok.com') and re.search(Validator.tiktok_pattern, url):
             return "TikTok", url
-        if re.search(Validator.facebook_pattern, url):
+        if Validator._host_in(url, 'facebook.com', 'fb.watch') and re.search(Validator.facebook_pattern, url):
             return "Facebook", url
         insta_match = re.search(Validator.instag_pattern, url)
-        if insta_match:
+        if Validator._host_in(url, 'instagram.com') and insta_match:
             return "Instagram", insta_match.group(2)
         return "Invalid URL", None
 
@@ -205,7 +211,7 @@ async def on_message(message: discord.Message) -> None:
     """Handle messages in specified channels"""
     if not message.author.bot and message.channel.id not in bot.channel_ids:
         urls = re.findall(
-            r'https?://[^\s]*?(?:(?:tiktok\.com|facebook\.com|fb\.watch)/\S*)',
+            r'https?://[^\s]*?(?:(?:tiktok\.com|tt\.site|facebook\.com|fb\.watch|instagram\.com)/\S*)',
             message.content
         )
         for url in urls:
@@ -241,6 +247,29 @@ async def send_reply(message: discord.Message, url: str) -> None:
         await reply.delete()
         return False
 
+    async def embed_media_ok(fixer_url: str) -> bool:
+        """Fetch fixer_url as Discord's crawler would and check it yields real media"""
+        headers = {'User-Agent': 'Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)'}
+        timeout = aiohttp.ClientTimeout(total=15)
+        try:
+            async with bot.aiohttp_session.get(fixer_url, headers=headers, timeout=timeout) as resp:
+                if resp.status != 200:
+                    return False
+                if resp.content_type.startswith(('image/', 'video/')):
+                    return True
+                page = await resp.text()
+                page_url = str(resp.url)
+            video = re.search(
+                r'<meta[^>]+(?:og:video|twitter:player:stream)"[^>]+content="([^"]+)"', page
+            )
+            if not video:
+                return bool(re.search(r'<meta[^>]+og:image"', page))
+            video_url = urljoin(page_url, html.unescape(video.group(1)))
+            async with bot.aiohttp_session.get(video_url, headers=headers, timeout=timeout) as resp:
+                return resp.status in (200, 206) and resp.content_type.startswith('video/')
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            return False
+
     async def try_facebed_embed(facebook_url: str) -> bool:
         if "facebook.com" not in facebook_url:
             return False
@@ -249,26 +278,30 @@ async def send_reply(message: discord.Message, url: str) -> None:
             r'https://facebed.com/\2',
             facebook_url,
         )
-        async with bot.aiohttp_session.get(facebed_url) as resp:
-            facebed_text = await resp.text()
-        if "Log in or sign up to view" not in facebed_text:
+        if await embed_media_ok(facebed_url):
             logger.info("Try to embed with facebed url: %s", facebed_url)
             return await try_embed(
                 f"> [Facebook](<{facebook_url}>) - [facebed]({facebed_url})"
             )
         return False
 
-    async def handle_facebook_image_failure(placeholder: discord.Message) -> None:
+    async def handle_facebook_failure(placeholder: discord.Message) -> None:
         await placeholder.delete()
         if await try_facebed_embed(url):
             return
         await send_error()
+
+    if urlparse(url).hostname in ('tt.site', 'www.tt.site'):
+        async with bot.aiohttp_session.get(url) as resp:
+            url = str(resp.url)
 
     source, item_id = Validator.validate(url)
     
     if source == 'TikTok':
         for domain in ["a.tnktok.com", "tfxktok.com"]:
             new_url = '/'.join(url.split('/', 3)[:2] + [domain] + url.split('/', 3)[3:])
+            if not await embed_media_ok(new_url):
+                continue
             if await try_embed(f"> [Video on Tiktok]({new_url})"):
                 return
 
@@ -280,6 +313,15 @@ async def send_reply(message: discord.Message, url: str) -> None:
         else:
             await send_error()
 
+    if source == 'Instagram':
+        for domain in ["zzinstagram.com", "eeinstagram.com"]:
+            fixer_url = urlparse(url)._replace(netloc=domain, query='').geturl()
+            if await embed_media_ok(fixer_url):
+                logger.info("Try to embed with instagram fixer: %s", fixer_url)
+                if await try_embed(f"> [Post on Instagram]({fixer_url})"):
+                    return
+        await send_error()
+
     if source == 'Facebook':
         def is_facebook_video(url: str) -> bool:
             video_patterns = [
@@ -287,7 +329,9 @@ async def send_reply(message: discord.Message, url: str) -> None:
             ]
             return any(pattern in url for pattern in video_patterns)
         
-        if any(x in url for x in ['fb.watch', '/watch/?v']):
+        host = urlparse(url).hostname or ''
+        is_facebook_host = host == 'facebook.com' or host.endswith('.facebook.com')
+        if host in ('fb.watch', 'www.fb.watch') or (is_facebook_host and '/watch/?v' in url):
             async with bot.aiohttp_session.get(url) as resp:
                 redirected_url = str(resp.url)
             try:
@@ -297,9 +341,6 @@ async def send_reply(message: discord.Message, url: str) -> None:
                 pass
 
         is_video = is_facebook_video(url)
-
-        if is_video and await try_facebed_embed(url):
-            return
 
         placeholder = await message.reply(
             FETCHING_MESSAGE,
@@ -330,16 +371,10 @@ async def send_reply(message: discord.Message, url: str) -> None:
                 status,
                 error_msg[:500],
             )
-            if is_video:
-                await edit_facebook_error_reply(placeholder)
-            else:
-                await handle_facebook_image_failure(placeholder)
+            await handle_facebook_failure(placeholder)
         except Exception:
             logger.error("Facebook reply crashed: url=%s", url, exc_info=True)
-            if is_video:
-                await edit_facebook_error_reply(placeholder)
-            else:
-                await handle_facebook_image_failure(placeholder)
+            await handle_facebook_failure(placeholder)
 
 async def start_bot() -> bool:  
     try:
