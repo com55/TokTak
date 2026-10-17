@@ -99,7 +99,8 @@ async def send_facebook_video(
     message: discord.Message,
     reply_message: discord.Message,
     session: aiohttp.ClientSession, 
-    video_url: str
+    video_url: str,
+    facebook_url: str,
 ) -> tuple[bool, int, str]:
     """Sends a Facebook video as a message in Discord using the Discord API.
 
@@ -108,6 +109,7 @@ async def send_facebook_video(
         message (discord.Message): The Discord message to reply to
         session (aiohttp.ClientSession): Active aiohttp session for making requests
         video_url (str): URL of the Facebook video to send
+        facebook_url (str): URL of the Facebook post containing the video
 
     Returns:
         tuple[bool, int, str]: A tuple containing:
@@ -120,8 +122,37 @@ async def send_facebook_video(
         "Authorization": f"Bot {discord_bot_token}",
         "Content-Type": "application/json"
     }
+    post_data = None
+    try:
+        post_data = await get_facebook_post_image(facebook_url)
+    except Exception:
+        logger.warning("Facebook video post metadata scrape failed: url=%s", facebook_url, exc_info=True)
+
+    post_owner = (post_data or {}).get("post_owner")
+    title_text = f"### [{post_owner or 'Facebook video'}]({facebook_url})"
+    author_text = (post_data or {}).get("post_author")
+    header_text = title_text
+    if author_text:
+        header_text = f"{title_text}\n-# {author_text}"
+    description_text = _truncate_description_for_discord(
+        header_text,
+        (post_data or {}).get("description"),
+    )
+
     components = ComponentV2Builder()
-    components.gallery().media(video_url).end_gallery()
+    container = components.container(accent_color=0x1877F2)
+    container.text(title_text)
+    if author_text:
+        container.text(f"-# {author_text}")
+    if description_text:
+        container.text(description_text)
+    container.separator()
+    container.gallery().media(video_url).end_gallery()
+    action_row = container.action_row()
+    action_row.button(style=5, label="View on Facebook", url=facebook_url)
+    action_row.end_action_row()
+    container.end_container()
+
     payload = components.to_payload()
     payload["content"] = ""
     payload["allowed_mentions"] = NO_MENTIONS_PAYLOAD

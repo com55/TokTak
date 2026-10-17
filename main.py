@@ -16,6 +16,7 @@ import requests
 import html
 from urllib.parse import urljoin, urlparse
 from module import Facebook, TikTokv2
+from module.facebook import get_facebook_video_url
 from module.send_component_v2 import (
     FETCHING_MESSAGE,
     send_facebook_video,
@@ -142,7 +143,11 @@ async def get_video(source: str, url: str) -> Optional[str]:
             if 'tiktok' in data['platform']:
                 return data['videos'][0]['quality_0']['address']
             elif 'facebook' in data['platform']:
-                return data['media'][0]['address']
+                media = (data.get('media') or [{}])[0]
+                if data.get('is_video') is True and media.get('is_video') is True:
+                    return media.get('address')
+                logger.info("Facebook scraper returned image-only metadata; trying video fallback")
+                return None
         else:
             logger.error(f"Error: {status}")
             logger.error(f"Details: {data}")
@@ -291,9 +296,26 @@ async def send_reply(message: discord.Message, url: str) -> None:
             )
         return False
 
-    async def handle_facebook_failure(placeholder: discord.Message) -> None:
+    async def facebook_media_is_video(video_url: Optional[str]) -> bool:
+        if not video_url:
+            return False
+        try:
+            timeout = aiohttp.ClientTimeout(total=15)
+            async with bot.aiohttp_session.get(
+                video_url,
+                headers={"Range": "bytes=0-0"},
+                timeout=timeout,
+            ) as resp:
+                return resp.status in (200, 206) and resp.content_type.startswith("video/")
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            return False
+
+    async def handle_facebook_failure(
+        placeholder: discord.Message,
+        allow_facebed: bool = True,
+    ) -> None:
         await placeholder.delete()
-        if await try_facebed_embed(url):
+        if allow_facebed and await try_facebed_embed(url):
             return
         await send_error()
 
@@ -364,10 +386,21 @@ async def send_reply(message: discord.Message, url: str) -> None:
         try:
             if is_video:
                 video_url = await get_video(source, url)
-                if not video_url:
-                    logger.error("Facebook video scrape failed: url=%s", url)
+                if not await facebook_media_is_video(video_url):
+                    logger.info("Facebook scraper did not return a playable video; trying yt-dlp: url=%s", url)
+                    try:
+                        video_url = await asyncio.to_thread(get_facebook_video_url, url)
+                    except Exception:
+                        logger.error("Facebook yt-dlp fallback failed: url=%s", url, exc_info=True)
+                        video_url = None
+
+                if not await facebook_media_is_video(video_url):
+                    logger.error("No playable Facebook video found: url=%s", url)
+                    await handle_facebook_failure(placeholder, allow_facebed=False)
+                    return
+
                 success, status, error_msg = await send_facebook_video(
-                    TOKEN, message, placeholder, bot.aiohttp_session, video_url
+                    TOKEN, message, placeholder, bot.aiohttp_session, video_url, url
                 )
             else:
                 success, status, error_msg = await send_facebook_image(
@@ -384,10 +417,10 @@ async def send_reply(message: discord.Message, url: str) -> None:
                 status,
                 error_msg[:500],
             )
-            await handle_facebook_failure(placeholder)
+            await handle_facebook_failure(placeholder, allow_facebed=not is_video)
         except Exception:
             logger.error("Facebook reply crashed: url=%s", url, exc_info=True)
-            await handle_facebook_failure(placeholder)
+            await handle_facebook_failure(placeholder, allow_facebed=not is_video)
 
 async def start_bot() -> bool:  
     try:

@@ -6,6 +6,7 @@ from collections.abc import Iterable, Mapping
 from urllib.parse import parse_qs, urlparse
 
 import requests
+import yt_dlp
 from bs4 import BeautifulSoup
 
 MOBILE_USER_AGENT = (
@@ -39,6 +40,26 @@ def _meta_content(soup: BeautifulSoup, prop: str) -> str | None:
     if tag and tag.get("content"):
         return tag["content"]
     return None
+
+
+def get_facebook_video_url(url: str) -> str | None:
+    """Extract a direct MP4 URL from a public Facebook video without cookies."""
+    options = {
+        "format": "best[ext=mp4]",
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "cachedir": False,
+    }
+    with yt_dlp.YoutubeDL(options) as downloader:
+        info = downloader.extract_info(url, download=False)
+
+    if not isinstance(info, dict):
+        return None
+    media_url = info.get("url")
+    if info.get("ext") != "mp4" or not media_url or info.get("vcodec") == "none":
+        return None
+    return media_url
 
 
 def _extract_from_open_graph(soup: BeautifulSoup) -> dict | None:
