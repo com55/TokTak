@@ -136,6 +136,13 @@ def _resolve_post_metadata(
     if not owner:
         return None, None
 
+    if og_desc:
+        description_position = owner.rfind(og_desc)
+        if description_position >= 0:
+            owner_suffix = owner[description_position + len(og_desc):].strip(" \t\r\n|·-")
+            if owner_suffix:
+                owner = owner_suffix
+
     if desktop_html:
         group_name = _extract_entity_name(desktop_html, "Group")
         if group_name:
