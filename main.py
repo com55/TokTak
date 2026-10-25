@@ -376,6 +376,7 @@ async def send_reply(message: discord.Message, url: str) -> None:
                 pass
 
         is_video = is_facebook_video(url)
+        is_story_post = urlparse(url).path.endswith("/story.php")
 
         placeholder = await message.reply(
             FETCHING_MESSAGE,
@@ -395,10 +396,15 @@ async def send_reply(message: discord.Message, url: str) -> None:
                         video_url = None
 
                 if not await facebook_media_is_video(video_url):
-                    logger.error("No playable Facebook video found: url=%s", url)
-                    await handle_facebook_failure(placeholder, allow_facebed=False)
-                    return
+                    if is_story_post:
+                        logger.info("Facebook story.php URL did not resolve to a video; treating as a post: url=%s", url)
+                        is_video = False
+                    else:
+                        logger.error("No playable Facebook video found: url=%s", url)
+                        await handle_facebook_failure(placeholder, allow_facebed=False)
+                        return
 
+            if is_video:
                 success, status, error_msg = await send_facebook_video(
                     TOKEN, message, placeholder, bot.aiohttp_session, video_url, url
                 )
