@@ -388,14 +388,9 @@ def _collect_post_images_from_html(
 
 
 def _has_visible_gallery(soup: BeautifulSoup) -> bool:
-    og_image = _meta_content(soup, "og:image")
-    if og_image and _is_post_image(og_image):
-        return True
-    if _extract_images_from_img_tags(soup):
-        return True
     if _extract_extra_images(soup):
         return True
-    return False
+    return len(_extract_images_from_img_tags(soup)) > 1
 
 
 def _overlay_count(overlay: Optional[str]) -> int:
@@ -524,7 +519,7 @@ def _extract_post_data(
 
     mobile_images.extend(_extract_images_from_img_tags(soup))
 
-    if len(_dedupe_images(mobile_images)) <= 1:
+    if len(_dedupe_images(mobile_images)) <= 1 and _has_visible_gallery(soup):
         mobile_images.extend(_extract_images_from_regex(html_content))
 
     mobile_images = _dedupe_images(mobile_images)
