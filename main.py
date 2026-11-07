@@ -17,6 +17,7 @@ import html
 from urllib.parse import urljoin, urlparse
 from module import Facebook, TikTokv2
 from module.facebook import get_facebook_video_url
+from module.threads import get_threads_fixer_url, threads_media_ok
 from module.send_component_v2 import (
     FETCHING_MESSAGE,
     send_facebook_video,
@@ -85,6 +86,8 @@ class Validator:
 
     @staticmethod
     def validate(url: str) -> Tuple[str, Optional[str]]:
+        if fixer_url := get_threads_fixer_url(url):
+            return "Threads", fixer_url
         if Validator._host_in(url, 'tiktok.com') and re.search(Validator.tiktok_pattern, url):
             return "TikTok", url
         if Validator._host_in(url, 'facebook.com', 'fb.watch') and re.search(Validator.facebook_pattern, url):
@@ -216,7 +219,8 @@ async def on_message(message: discord.Message) -> None:
     """Handle messages in specified channels"""
     if not message.author.bot and message.channel.id not in bot.channel_ids:
         urls = re.findall(
-            r'https?://[^\s]*?(?:(?:tiktok\.com|tt\.site|facebook\.com|fb\.watch|instagram\.com)/\S*)',
+            r'https?://[^\s]*?(?:(?:tiktok\.com|tt\.site|facebook\.com|fb\.watch|instagram\.com)/\S*'
+            r'|(?i:threads\.com|threads\.net)(?::443)?/\S*)',
             message.content
         )
         for url in urls:
@@ -325,13 +329,18 @@ async def send_reply(message: discord.Message, url: str) -> None:
 
     source, item_id = Validator.validate(url)
     
-    if source in ('TikTok', 'Instagram'):
+    if source in ('TikTok', 'Instagram', 'Threads'):
         placeholder = await message.reply(
             FETCHING_MESSAGE,
             mention_author=False,
             allowed_mentions=discord.AllowedMentions.none(),
         )
         try:
+            if source == 'Threads':
+                if await threads_media_ok(item_id):
+                    if await try_embed(f"> [Post on Threads]({item_id})", placeholder):
+                        return
+
             if source == 'TikTok':
                 for domain in ["a.tnktok.com", "tfxktok.com"]:
                     new_url = '/'.join(url.split('/', 3)[:2] + [domain] + url.split('/', 3)[3:])
